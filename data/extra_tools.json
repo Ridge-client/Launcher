@@ -1,0 +1,89 @@
+{
+  "categories": [
+    {
+      "name": "Ridge extras",
+      "tools": [
+        {
+          "name": "Naver",
+          "url": "https://www.naver.com",
+          "description": "South Korean search portal"
+        },
+        {
+          "name": "Censys",
+          "url": "https://search.censys.io",
+          "description": "Host and certificate search"
+        },
+        {
+          "name": "ICANN Lookup",
+          "url": "https://lookup.icann.org",
+          "description": "Official RDAP/WHOIS registration lookup"
+        },
+        {
+          "name": "Hurricane Electric BGP Toolkit",
+          "url": "https://bgp.he.net",
+          "description": "ASN, prefix and peering information"
+        },
+        {
+          "name": "archive.today",
+          "url": "https://archive.ph",
+          "description": "On-demand page snapshots"
+        },
+        {
+          "name": "CachedView",
+          "url": "https://cachedview.nl",
+          "description": "Cached page lookup across archives"
+        },
+        {
+          "name": "Jimpl",
+          "url": "https://jimpl.com",
+          "description": "EXIF metadata viewer"
+        },
+        {
+          "name": "OCCRP Aleph",
+          "url": "https://aleph.occrp.org",
+          "description": "Investigative data archive"
+        },
+        {
+          "name": "UK Companies House",
+          "url": "https://find-and-update.company-information.service.gov.uk",
+          "description": "UK company register"
+        },
+        {
+          "name": "Telemetr",
+          "url": "https://telemetr.io",
+          "description": "Telegram channel search"
+        },
+        {
+          "name": "Arctic Shift",
+          "url": "https://arctic-shift.photon-reddit.com",
+          "description": "Reddit archive search"
+        },
+        {
+          "name": "Google Earth",
+          "url": "https://earth.google.com/web/",
+          "description": "3D globe and historical imagery"
+        },
+        {
+          "name": "Overpass Turbo",
+          "url": "https://overpass-turbo.eu",
+          "description": "Query OpenStreetMap features"
+        },
+        {
+          "name": "PeakVisor",
+          "url": "https://peakvisor.com",
+          "description": "Mountain identification for geolocation"
+        },
+        {
+          "name": "OpenRailwayMap",
+          "url": "https://www.openrailwaymap.org",
+          "description": "Railway infrastructure map"
+        },
+        {
+          "name": "Bellingcat Toolkit",
+          "url": "https://bellingcat.gitbook.io/toolkit",
+          "description": "Curated investigation tools"
+        }
+      ]
+    }
+  ]
+}

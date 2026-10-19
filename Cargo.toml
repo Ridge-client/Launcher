@@ -1,0 +1,54 @@
+[package]
+name = "ridge"
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.82"
+description = "Desktop app for OSINT: a catalog of OSINT tools and isolated Docker sock-puppet personas"
+license = "GPL-3.0-only"
+readme = "README.md"
+
+[[bin]]
+name = "ridge"
+path = "src/main.rs"
+
+[dependencies]
+# numbers and captions drawn into exported annotated images
+ab_glyph = "0.2.32"
+anyhow = "1"
+# pictures of graph entities, kept inside the graph file
+base64 = "0.22"
+bollard = "0.18"
+bytes = "1"
+clap = { version = "4.5", features = ["derive", "env"] }
+colored = "2"
+eframe = { version = "0.37", default-features = false, features = ["accesskit", "clipboard", "default_fonts", "glow", "links", "persistence", "system_fonts", "wayland", "x11"] }
+# the fonts egui ships, reused for exported annotated images
+epaint_default_fonts = "0.37.0"
+futures-util = "0.3"
+# profile picture thumbnails (same version eframe uses)
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
+indicatif = "0.17"
+open = "5"
+# native "Choose image" dialog
+rfd = "0.17"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "http2"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tar = "0.4"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "net", "io-util"] }
+
+# the built-in browser of the "Create persona" screen (WebView2)
+[target.'cfg(windows)'.dependencies]
+wry = "0.57"
+
+[build-dependencies]
+embed-resource = "3"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+
+[dev-dependencies]
+# the format eframe saves the window's state in (persona sheets must keep loading)
+ron = "0.12.2"

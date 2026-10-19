@@ -1,0 +1,27 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <!-- Ridge app icon, in the Cairn launcher's style: one flat tile colour and a subject of stacked,
+       faceted slate layers (lighter at the back), split by gaps of the tile colour, each with a thin
+       lighter bevel along its top edge. Each layer is drawn gap, bevel, then body. -->
+  <defs>
+    <path id="back"  d="M112 432 L204 196 L242 236 L300 132 L362 232 L388 208 L430 432 Z"/>
+    <path id="mid"   d="M84 432 L170 258 L214 296 L276 206 L340 296 L382 270 L444 432 Z"/>
+    <path id="front" d="M62 424 L60 416 L132 328 L190 370 L250 292 L322 382 L380 340 L452 416 L450 424 L424 436 L88 436 Z"/>
+    <clipPath id="c-back"><use href="#back"/></clipPath>
+    <clipPath id="c-mid"><use href="#mid"/></clipPath>
+    <clipPath id="c-front"><use href="#front"/></clipPath>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="#a9c8d9"/>
+  <g transform="translate(0 -26)">
+
+  <use href="#back" fill="#7d96a8"/>
+  <g clip-path="url(#c-back)"><use href="#back" transform="translate(0 7)" fill="#3f5668"/></g>
+
+  <use href="#mid" fill="#a9c8d9" stroke="#a9c8d9" stroke-width="16" stroke-linejoin="round"/>
+  <use href="#mid" fill="#5f7689"/>
+  <g clip-path="url(#c-mid)"><use href="#mid" transform="translate(0 7)" fill="#2b3d4d"/></g>
+
+  <use href="#front" fill="#a9c8d9" stroke="#a9c8d9" stroke-width="16" stroke-linejoin="round"/>
+  <use href="#front" fill="#45596b"/>
+  <g clip-path="url(#c-front)"><use href="#front" transform="translate(0 7)" fill="#17222d"/></g>
+  </g>
+</svg>

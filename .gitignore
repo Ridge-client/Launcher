@@ -1,0 +1,6 @@
+/target
+/dist
+*.env
+.env*
+/release
+tools/signing.local.json

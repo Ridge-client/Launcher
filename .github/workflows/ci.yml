@@ -1,0 +1,147 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+    tags: ['[0-9]+.[0-9]+.[0-9]+']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+# Ridge ships for Windows only: every job that builds or tests it runs on Windows.
+jobs:
+  lint:
+    name: fmt + clippy
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --locked --all-targets --all-features -- -D warnings
+
+  test:
+    name: test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --locked --all-targets
+
+  # Decides whether this run publishes a release. A release is a bare X.Y.Z tag:
+  #   * a pushed tag X.Y.Z (must match Cargo.toml), or
+  #   * a push to main/master whose commit subject starts with "chore:" (chore: version X.Y.Z)
+  #     and whose Cargo.toml version has no tag yet (i.e. the version was bumped).
+  version:
+    name: detect release
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.detect.outputs.version }}
+      release: ${{ steps.detect.outputs.release }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: detect
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          REF_NAME: ${{ github.ref_name }}
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n1)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          release=false
+          if [[ "$REF" == refs/tags/* ]]; then
+            if [[ "$REF_NAME" != "$version" ]]; then
+              echo "::error::Tag $REF_NAME does not match Cargo.toml version $version"
+              exit 1
+            fi
+            release=true
+          elif [[ "$EVENT" == "push" && ( "$REF" == "refs/heads/main" || "$REF" == "refs/heads/master" ) && "$COMMIT_MSG" == chore:* ]]; then
+            if git rev-parse -q --verify "refs/tags/$version" >/dev/null; then
+              echo "::notice::$version is already released; bump the version in Cargo.toml to publish a new release."
+            else
+              release=true
+            fi
+          fi
+          echo "release=$release" >> "$GITHUB_OUTPUT"
+          echo "version=$version release=$release"
+
+  # Windows: one Setup (Ridge-Setup-X.Y.Z.exe), built with Inno Setup like the Cairn launcher's.
+  # It is signed with Azure Artifact Signing when the RIDGE_SIGN_* and AZURE_* secrets are set (README, "Code signing").
+  windows:
+    name: build (windows)
+    needs: [lint, test, version]
+    runs-on: windows-latest
+    env:
+      RIDGE_SIGN_ENDPOINT: ${{ secrets.RIDGE_SIGN_ENDPOINT }}
+      RIDGE_SIGN_ACCOUNT: ${{ secrets.RIDGE_SIGN_ACCOUNT }}
+      RIDGE_SIGN_PROFILE: ${{ secrets.RIDGE_SIGN_PROFILE }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: windows
+      - run: cargo build --release --locked --target x86_64-pc-windows-msvc
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --no-progress -y
+      - name: Fetch the Artifact Signing client
+        if: env.RIDGE_SIGN_ACCOUNT != ''
+        shell: pwsh
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP "artifact-signing"
+          Invoke-WebRequest "https://api.nuget.org/v3-flatcontainer/microsoft.artifactsigning.client/1.0.146/microsoft.artifactsigning.client.1.0.146.nupkg" -OutFile "$dir.zip"
+          Expand-Archive "$dir.zip" -DestinationPath $dir
+          "RIDGE_SIGN_DLIB=$dir\bin\x64\Azure.CodeSigning.Dlib.dll" >> $env:GITHUB_ENV
+      - name: Build installer
+        shell: pwsh
+        run: ./tools/Build-Installer.ps1 -Version "${{ needs.version.outputs.version }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: release/Ridge-Setup-${{ needs.version.outputs.version }}.exe
+          if-no-files-found: error
+
+  release:
+    name: publish release
+    needs: [version, windows]
+    if: needs.version.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Changelog
+        shell: pwsh
+        run: ./tools/New-ReleaseNotes.ps1 -OutFile notes.md -Tag "${{ needs.version.outputs.version }}"
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          gh release create "$VERSION" \
+            "dist/Ridge-Setup-$VERSION.exe" \
+            --title "$VERSION" --notes-file notes.md --target "$GITHUB_SHA"
