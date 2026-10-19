@@ -19,8 +19,7 @@
 
 ## About The Project
 
-**Ridge** is a Windows desktop app for OSINT investigations. It gathers the 1,700+ tools of the
-[Awesome-OSINT-List](https://github.com/Astrosp/Awesome-OSINT-List), runs sock-puppet personas in isolated browsers that cannot
+**Ridge** is a Windows desktop app for OSINT investigations. It gathers the 1,700+ tools, runs sock-puppet personas in isolated VM that cannot
 reach your PC or your home network, maps what you find on investigation graphs, and marks up pictures for reports.
 
 ### Built With
@@ -36,7 +35,7 @@ reach your PC or your home network, maps what you find on investigation graphs, 
 
 * Windows 10 or 11
 * [Docker Desktop](https://www.docker.com/products/docker-desktop/) for the personas (Ridge can install or start it for you); the other tabs work without it
-* A VPN, since the personas' browsers go online through your own connection
+* A VPN (optional but advised since the personas' browsers go online through your own connection)
 
 ### Installation
 
@@ -52,8 +51,12 @@ The installer is not code-signed yet, so Windows may warn: click **More info**, 
 * **Annotate**: open a picture, draw numbered boxes on it, caption them, and **Export PNG**.
 * **Settings**: choose what the personas are kept away from (this PC, your home network, each other) and **Run checks** to prove it.
 
+## Credits
+
+See [AUTHORS.md](AUTHORS.md) for the complete list of contributors and historical upstream lineage.
+
 ## License
 
-Ridge is free software under the [GNU General Public License v3.0](LICENSE). The icons are [Phosphor Icons](https://phosphoricons.com) ([MIT](assets/Phosphor-LICENSE.txt)), and the catalog comes from the [Awesome-OSINT-List](https://github.com/Astrosp/Awesome-OSINT-List).
+Ridge is free software under the [GNU General Public License v3.0](LICENSE).
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
