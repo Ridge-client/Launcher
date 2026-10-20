@@ -216,18 +216,33 @@ pub(super) fn show(app: &mut RidgeApp, ui: &mut egui::Ui) {
         return;
     }
     st.active = st.active.min(st.docs.len() - 1);
+    let side = |ui: &egui::Ui| {
+        egui::Frame::new()
+            .fill(ui.visuals().panel_fill)
+            .inner_margin(egui::Margin::symmetric(12, 0))
+    };
     egui::Panel::left("annotate_images")
         .resizable(false)
-        .exact_size(130.0)
+        .exact_size(160.0)
+        .frame(side(ui))
         .show(ui, |ui| images_panel(st, ui));
     egui::Panel::right("annotate_marks")
         .resizable(false)
-        .exact_size(340.0)
+        .exact_size(360.0)
+        .frame(side(ui))
         .show(ui, |ui| marks_panel(st, ui));
-    ui.add_space(4.0);
-    toolbar(st, ui);
-    ui.add_space(4.0);
-    canvas(st, ui);
+    egui::Frame::new()
+        .inner_margin(egui::Margin {
+            left: 12,
+            right: 12,
+            top: 8,
+            bottom: 12,
+        })
+        .show(ui, |ui| {
+            toolbar(st, ui);
+            ui.add_space(6.0);
+            canvas(st, ui);
+        });
     close_dialog(st, ui);
 }
 
@@ -265,13 +280,6 @@ fn images_panel(st: &mut State, ui: &mut egui::Ui) {
                     });
                     ui.horizontal(|ui| {
                         let n = doc.image.marks.len();
-                        ui.add(
-                            egui::Label::new(egui::RichText::new(&doc.image.name).small())
-                                .truncate(),
-                        );
-                        if n > 0 {
-                            ui.weak(format!("{n}"));
-                        }
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if ui
                                 .small_button(icons::CANCEL)
@@ -280,6 +288,13 @@ fn images_panel(st: &mut State, ui: &mut egui::Ui) {
                             {
                                 closing = Some(i);
                             }
+                            if n > 0 {
+                                ui.weak(format!("{n}"));
+                            }
+                            ui.add(
+                                egui::Label::new(egui::RichText::new(&doc.image.name).small())
+                                    .truncate(),
+                            );
                         });
                     });
                 });
@@ -312,7 +327,7 @@ fn toolbar(st: &mut State, ui: &mut egui::Ui) {
             st.tool = Tool::Annotate;
         }
     }
-    ui.horizontal_wrapped(|ui| {
+    ui.horizontal(|ui| {
         if ui
             .selectable_label(st.tool == Tool::Pointer, "Pointer")
             .on_hover_text("V · Move and zoom the picture, select, move and resize boxes")
@@ -332,6 +347,29 @@ fn toolbar(st: &mut State, ui: &mut egui::Ui) {
         ui.add(egui::TextEdit::singleline(&mut doc.image.name).desired_width(160.0))
             .on_hover_text("Name of this image");
         ui.separator();
+        if let Some(canvas) = st.canvas {
+            doc.zoom.buttons(ui, canvas, doc.size, false);
+            ui.separator();
+        }
+        if ui
+            .button(icons::with(icons::DOWNLOAD, "Export PNG…"))
+            .on_hover_text("The picture with its boxes and numbers, and a legend of the captions")
+            .clicked()
+        {
+            export(st);
+        }
+        if st.docs.len() > 1
+            && ui
+                .button("Export all…")
+                .on_hover_text("Every open picture, as a PNG each, into a folder")
+                .clicked()
+        {
+            export_all(st);
+        }
+    });
+    ui.add_space(4.0);
+    ui.horizontal(|ui| {
+        let doc = &mut st.docs[st.active];
         ui.label("Colour");
         for (i, rgb) in COLOURS.iter().enumerate() {
             let (rect, r) = ui.allocate_exact_size(Vec2::splat(20.0), egui::Sense::click());
@@ -355,26 +393,6 @@ fn toolbar(st: &mut State, ui: &mut egui::Ui) {
                 }
             }
         }
-        ui.separator();
-        if let Some(canvas) = st.canvas {
-            doc.zoom.buttons(ui, canvas, doc.size, false);
-            ui.separator();
-        }
-        if ui
-            .button(icons::with(icons::DOWNLOAD, "Export PNG…"))
-            .on_hover_text("The picture with its boxes and numbers, and a legend of the captions")
-            .clicked()
-        {
-            export(st);
-        }
-        if st.docs.len() > 1
-            && ui
-                .button("Export all…")
-                .on_hover_text("Every open picture, as a PNG each, into a folder")
-                .clicked()
-        {
-            export_all(st);
-        }
     });
     match &st.status {
         Some((text, true)) => {
@@ -383,9 +401,7 @@ fn toolbar(st: &mut State, ui: &mut egui::Ui) {
         Some((text, false)) => {
             ui.weak(text);
         }
-        None => {
-            ui.weak("Pointer (V): drag to move the picture, a box's edge to move it, its corner to resize · Annotate (A): drag to box something · Delete removes the selected box · Ctrl+scroll zooms");
-        }
+        None => {}
     }
 }
 
