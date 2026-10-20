@@ -7,6 +7,7 @@
 mod annotate;
 mod catalog;
 mod cli;
+mod depix;
 mod graph;
 mod gui;
 mod persona;

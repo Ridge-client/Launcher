@@ -7,7 +7,7 @@ use super::{caps, card, page_title, primary_button, RidgeApp, NAV_MUTED, NAV_TEX
 const ISSUES: &str = "https://github.com/Ridge-client/Launcher/issues/new";
 
 /// Each tab: its name and how it works, a line at a time.
-const TABS: [(&str, &[&str]); 8] = [
+const TABS: [(&str, &[&str]); 9] = [
     (
         "OSINT tools",
         &[
@@ -34,6 +34,14 @@ const TABS: [(&str, &[&str]); 8] = [
         &[
             "Open a picture (or drop one on the window), drag to draw numbered boxes, caption them, and Export PNG for a report.",
             "Ctrl+scroll zooms; scroll or drag with the middle button to move around.",
+        ],
+    ),
+    (
+        "Depix",
+        &[
+            "Recovers text hidden by pixelation. Open the pixelated picture and drag over the pixelated text; Ridge finds the block size.",
+            "Open a reference: type the text from Make the reference text in the same editor, font and size as the original, and screenshot it. Recover matches each block to the reference and shows the best fit on the right.",
+            "It only works on mosaic-style pixelation (not blur) and the reference must match the original's font, size and colours.",
         ],
     ),
     (

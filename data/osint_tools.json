@@ -29,6 +29,41 @@
           "description": "check if your email address is in a data breach"
         },
         {
+          "name": "Brixhub",
+          "url": "https://brixhub.st/",
+          "description": "Search leaked emails, usernames, phone numbers and passwords across breach databases."
+        },
+        {
+          "name": "Hudson Rock Cavalier",
+          "url": "https://cavalier.hudsonrock.com/",
+          "description": "Check whether an email, domain or username appears in infostealer malware logs."
+        },
+        {
+          "name": "LeakPeek",
+          "url": "https://leakpeek.com/",
+          "description": "Search leaked credentials by email, username, password or domain."
+        },
+        {
+          "name": "Firefox Monitor",
+          "url": "https://monitor.mozilla.org/",
+          "description": "Mozilla's breach check for an email address, built on Have I Been Pwned data."
+        },
+        {
+          "name": "Pwned Passwords",
+          "url": "https://haveibeenpwned.com/Passwords",
+          "description": "Check whether a password has appeared in a breach, without sending the password itself."
+        },
+        {
+          "name": "Cybernews Leak Checker",
+          "url": "https://cybernews.com/personal-data-leak-check/",
+          "description": "Check an email address against known leaks and breaches."
+        },
+        {
+          "name": "Have I Sold My Data",
+          "url": "https://haveisoldmydata.com/",
+          "description": "Find out which data brokers and breaches have your email address."
+        },
+        {
           "name": "ScamSearch",
           "url": "https://scamsearch.io/",
           "description": "search to find phone, email, profile if is tobe a scammer."

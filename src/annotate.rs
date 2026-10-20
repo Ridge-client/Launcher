@@ -191,7 +191,7 @@ fn text_width(font: &FontRef, text: &str, size: f32) -> f32 {
 }
 
 /// Draws `text` with its baseline at `y`, blending its edges into the picture.
-fn draw_text(
+pub(crate) fn draw_text(
     img: &mut RgbaImage,
     font: &FontRef,
     text: &str,

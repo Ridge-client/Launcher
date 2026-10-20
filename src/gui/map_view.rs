@@ -23,8 +23,6 @@ use crate::tracks::{self, Track};
 const TILE_SIZE: f64 = 256.0;
 const MIN_ZOOM: f32 = 2.0;
 const MAX_ZOOM: f32 = 19.0;
-const TILE_SERVER: &str = "https://tile.openstreetmap.org";
-const TILE_PROVIDER: &str = "osm-dark";
 const USER_AGENT: &str = concat!("Ridge/", env!("CARGO_PKG_VERSION"), " (desktop OSINT app)");
 const EXTENSIONS: [&str; 6] = ["gpx", "kml", "kmz", "nmea", "log", "txt"];
 
@@ -41,8 +39,87 @@ const PALETTE: [Color32; 8] = [
     Color32::from_rgb(0xff, 0xca, 0x28), // yellow
 ];
 
+/// A basemap, as the layer selector offers them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+enum Layer {
+    /// OpenStreetMap, darkened to fit the app.
+    #[default]
+    Dark,
+    /// OpenStreetMap as it is.
+    Streets,
+    /// Esri's World Imagery.
+    Satellite,
+    /// OpenTopoMap: contour lines and relief.
+    Terrain,
+}
+
+impl Layer {
+    const ALL: [Layer; 4] = [
+        Layer::Dark,
+        Layer::Streets,
+        Layer::Satellite,
+        Layer::Terrain,
+    ];
+
+    fn name(self) -> &'static str {
+        match self {
+            Layer::Dark => "Dark",
+            Layer::Streets => "Streets",
+            Layer::Satellite => "Satellite",
+            Layer::Terrain => "Terrain",
+        }
+    }
+
+    /// The folder the layer's tiles are cached in.
+    fn provider(self) -> &'static str {
+        match self {
+            Layer::Dark => "osm-dark",
+            Layer::Streets => "osm",
+            Layer::Satellite => "esri-imagery",
+            Layer::Terrain => "opentopomap",
+        }
+    }
+
+    fn url(self, z: u8, x: u32, y: u32) -> String {
+        match self {
+            Layer::Dark | Layer::Streets => format!("https://tile.openstreetmap.org/{z}/{x}/{y}.png"),
+            Layer::Satellite => format!(
+                "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+            ),
+            Layer::Terrain => format!("https://tile.opentopomap.org/{z}/{x}/{y}.png"),
+        }
+    }
+
+    /// The deepest level the layer has tiles for (the map scales the last one past it).
+    fn max_zoom(self) -> f32 {
+        match self {
+            Layer::Terrain => 17.0,
+            _ => MAX_ZOOM,
+        }
+    }
+
+    fn attribution(self) -> &'static str {
+        match self {
+            Layer::Dark | Layer::Streets => "© OpenStreetMap contributors",
+            Layer::Satellite => "Imagery © Esri, Maxar, Earthstar Geographics",
+            Layer::Terrain => "© OpenStreetMap contributors, SRTM · OpenTopoMap (CC-BY-SA)",
+        }
+    }
+
+    /// The colour of the layer's card in the selector, a stand-in for a thumbnail.
+    fn swatch(self) -> Color32 {
+        match self {
+            Layer::Dark => Color32::from_rgb(0x2b, 0x2f, 0x36),
+            Layer::Streets => Color32::from_rgb(0xe9, 0xe4, 0xd8),
+            Layer::Satellite => Color32::from_rgb(0x3b, 0x5a, 0x3a),
+            Layer::Terrain => Color32::from_rgb(0xc9, 0xb8, 0x8c),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(super) struct TileKey {
+    layer: Layer,
     z: u8,
     x: u32,
     y: u32,
@@ -128,6 +205,8 @@ pub(super) struct State {
     center: (f64, f64),
     zoom: f32,
     tiles: HashMap<TileKey, TileState>,
+    layer: Layer,
+    layers_open: bool,
     files: Vec<LoadedFile>,
     error: Option<String>,
     canvas: Option<Rect>,
@@ -152,6 +231,8 @@ impl Default for State {
             center: (48.8566, 2.3522),
             zoom: 11.0,
             tiles: HashMap::new(),
+            layer: Layer::default(),
+            layers_open: false,
             files: Vec::new(),
             error: None,
             canvas: None,
@@ -658,7 +739,7 @@ async fn fetch_tile(client: reqwest::Client, key: TileKey) -> Option<egui::Color
     let bytes = match std::fs::read(&cached) {
         Ok(bytes) => bytes,
         Err(_) => {
-            let url = format!("{TILE_SERVER}/{}/{}/{}.png", key.z, key.x, key.y);
+            let url = key.layer.url(key.z, key.x, key.y);
             let response = client.get(&url).send().await.ok()?;
             if !response.status().is_success() {
                 return None;
@@ -671,7 +752,12 @@ async fn fetch_tile(client: reqwest::Client, key: TileKey) -> Option<egui::Color
             bytes
         }
     };
-    let decoded = darken(image::load_from_memory(&bytes).ok()?.to_rgba8());
+    let decoded = image::load_from_memory(&bytes).ok()?.to_rgba8();
+    let decoded = if key.layer == Layer::Dark {
+        darken(decoded)
+    } else {
+        decoded
+    };
     let size = [decoded.width() as usize, decoded.height() as usize];
     Some(egui::ColorImage::from_rgba_unmultiplied(
         size,
@@ -706,7 +792,7 @@ fn darken(mut image: image::RgbaImage) -> image::RgbaImage {
 fn cache_path(key: TileKey) -> PathBuf {
     std::env::temp_dir()
         .join("Ridge-tiles")
-        .join(TILE_PROVIDER)
+        .join(key.layer.provider())
         .join(key.z.to_string())
         .join(key.x.to_string())
         .join(format!("{}.png", key.y))
@@ -715,7 +801,13 @@ fn cache_path(key: TileKey) -> PathBuf {
 pub(super) fn tile_loaded(app: &mut RidgeApp, key: TileKey, image: Option<egui::ColorImage>) {
     let state = match image {
         Some(image) => {
-            let name = format!("tile-{}-{}-{}", key.z, key.x, key.y);
+            let name = format!(
+                "tile-{}-{}-{}-{}",
+                key.layer.provider(),
+                key.z,
+                key.x,
+                key.y
+            );
             TileState::Ready(
                 app.ctx
                     .load_texture(name, image, egui::TextureOptions::LINEAR),
@@ -726,6 +818,67 @@ pub(super) fn tile_loaded(app: &mut RidgeApp, key: TileKey, image: Option<egui::
     app.map.tiles.insert(key, state);
 }
 
+/// The layer selector at the canvas's bottom-left corner, as Google Maps has it: a card with
+/// the current layer that opens into one card per basemap.
+fn layer_selector(app: &mut RidgeApp, ui: &egui::Ui, area: Rect) {
+    egui::Area::new(egui::Id::unique("map_layers"))
+        .order(egui::Order::Foreground)
+        .fixed_pos(area.left_bottom() + Vec2::new(10.0, -10.0))
+        .pivot(egui::Align2::LEFT_BOTTOM)
+        .show(ui.ctx(), |ui| {
+            egui::Frame::popup(ui.style()).show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    let open = app.map.layers_open;
+                    let current = app.map.layer;
+                    let cards: Vec<Layer> = if open {
+                        Layer::ALL.to_vec()
+                    } else {
+                        vec![current]
+                    };
+                    for layer in cards {
+                        let (rect, r) =
+                            ui.allocate_exact_size(Vec2::new(64.0, 56.0), egui::Sense::click());
+                        let painter = ui.painter();
+                        painter.rect_filled(rect, 6.0, layer.swatch());
+                        let label_bg = Rect::from_min_max(
+                            Pos2::new(rect.left(), rect.bottom() - 18.0),
+                            rect.right_bottom(),
+                        );
+                        painter.rect_filled(label_bg, 6.0, Color32::from_black_alpha(160));
+                        painter.text(
+                            label_bg.center(),
+                            egui::Align2::CENTER_CENTER,
+                            if open { layer.name() } else { "Layers" },
+                            egui::FontId::proportional(12.0),
+                            Color32::WHITE,
+                        );
+                        if open && layer == current {
+                            painter.rect_stroke(
+                                rect,
+                                6.0,
+                                Stroke::new(2.5, NAV_TEXT),
+                                egui::StrokeKind::Inside,
+                            );
+                        }
+                        let r = r
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .on_hover_text(if open {
+                                layer.name()
+                            } else {
+                                "Change the map layer"
+                            });
+                        if r.clicked() {
+                            if open {
+                                app.map.layer = layer;
+                            }
+                            app.map.layers_open = !open;
+                        }
+                    }
+                });
+            });
+        });
+}
+
 fn canvas(app: &mut RidgeApp, ui: &mut egui::Ui) {
     let area = ui.available_rect_before_wrap();
     let response = ui.allocate_rect(area, egui::Sense::click_and_drag());
@@ -734,7 +887,8 @@ fn canvas(app: &mut RidgeApp, ui: &mut egui::Ui) {
     app.map.canvas = Some(area);
 
     let zoom = app.map.zoom as f64;
-    let tile_zoom = (app.map.zoom.round().clamp(MIN_ZOOM, MAX_ZOOM)) as i32;
+    let layer = app.map.layer;
+    let tile_zoom = (app.map.zoom.round().clamp(MIN_ZOOM, layer.max_zoom())) as i32;
     // tile-space pixels, scaled up to this frame's (possibly in-between) zoom level
     let scale = 2f64.powf(zoom - tile_zoom as f64);
     let center_world = (
@@ -764,6 +918,7 @@ fn canvas(app: &mut RidgeApp, ui: &mut egui::Ui) {
         for tx_raw in x0..=x1 {
             let tx = tx_raw.rem_euclid(tiles_across);
             let key = TileKey {
+                layer,
                 z: tile_zoom as u8,
                 x: tx as u32,
                 y: ty as u32,
@@ -795,6 +950,13 @@ fn canvas(app: &mut RidgeApp, ui: &mut egui::Ui) {
     }
 
     let cursor_time = app.map.cursor_time;
+    painter.text(
+        area.right_bottom() - Vec2::new(8.0, 6.0),
+        egui::Align2::RIGHT_BOTTOM,
+        layer.attribution(),
+        egui::FontId::proportional(11.0),
+        Color32::from_white_alpha(if layer == Layer::Streets { 140 } else { 110 }),
+    );
     for file in app.map.files.iter().filter(|f| f.on_map) {
         for track in &file.tracks {
             let points: Vec<Pos2> = track
@@ -821,6 +983,8 @@ fn canvas(app: &mut RidgeApp, ui: &mut egui::Ui) {
         }
     }
 
+    layer_selector(app, ui, area);
+
     if response.dragged() {
         let d = response.drag_delta();
         let moved = (center_world.0 - d.x as f64, center_world.1 - d.y as f64);
@@ -838,6 +1002,7 @@ fn canvas(app: &mut RidgeApp, ui: &mut egui::Ui) {
         };
         if delta != 0.0 {
             let new_zoom = (app.map.zoom + delta).clamp(MIN_ZOOM, MAX_ZOOM);
+            let new_zoom = new_zoom.min(layer.max_zoom() + 2.0);
             if new_zoom != app.map.zoom {
                 let offset = (p.x - area.center().x, p.y - area.center().y);
                 let anchor = (

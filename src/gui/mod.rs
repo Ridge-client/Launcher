@@ -6,6 +6,7 @@
 mod annotate_view;
 mod browser;
 mod catalog_view;
+mod depix_view;
 mod graph_view;
 mod help_view;
 mod icons;
@@ -88,6 +89,7 @@ enum Tab {
     Personas,
     Graph,
     Annotate,
+    Depix,
     Shadows,
     Map,
     Versions,
@@ -132,6 +134,7 @@ struct RidgeApp {
     personas: persona_view::State,
     graph: graph_view::State,
     annotate: annotate_view::State,
+    depix: depix_view::State,
     shadows: sun_view::State,
     map: map_view::State,
     settings: settings_view::State,
@@ -165,6 +168,7 @@ impl RidgeApp {
             personas: persona_view::State::load(cc.storage),
             graph: graph_view::State::load(cc.storage),
             annotate: annotate_view::State::default(),
+            depix: depix_view::State::default(),
             shadows: sun_view::State::default(),
             map: map_view::State::default(),
             settings: settings_view::State::default(),
@@ -261,6 +265,7 @@ impl eframe::App for RidgeApp {
                         (Tab::Personas, "Personas"),
                         (Tab::Graph, "Graph"),
                         (Tab::Annotate, "Annotate"),
+                        (Tab::Depix, "Depix"),
                         (Tab::Shadows, "Shadows"),
                         (Tab::Map, "Map"),
                     ] {
@@ -313,6 +318,7 @@ impl eframe::App for RidgeApp {
             Tab::Personas => persona_view::show(self, ui, frame),
             Tab::Graph => graph_view::show(self, ui),
             Tab::Annotate => annotate_view::show(self, ui),
+            Tab::Depix => depix_view::show(self, ui),
             Tab::Shadows => sun_view::show(self, ui),
             Tab::Map => map_view::show(self, ui),
             Tab::Versions => versions_view::show(self, ui),

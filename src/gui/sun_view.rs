@@ -351,9 +351,11 @@ pub(super) fn show(app: &mut RidgeApp, ui: &mut egui::Ui) {
     );
     let gap = 10.0;
     let top_h = (area.height() * 0.45).round();
-    let half = (area.width() - gap) / 2.0;
+    // the photo and the map get more room between them than the cards below do
+    let side_gap = 32.0;
+    let half = (area.width() - side_gap) / 2.0;
     for (i, view) in View::BOTH.into_iter().enumerate() {
-        let left = area.min.x + i as f32 * (half + gap);
+        let left = area.min.x + i as f32 * (half + side_gap);
         let pane = Rect::from_min_size(Pos2::new(left, area.min.y), Vec2::new(half, top_h));
         // a header of fixed height, so both images start level whatever it holds
         let (header, image) = pane.split_top_bottom_at_y(pane.top() + 50.0);
