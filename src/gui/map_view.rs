@@ -202,15 +202,15 @@ impl Metric {
 pub(super) struct State {
     /// Where the map is centred, and how far in (fractional: a pinch or a scroll notch moves it
     /// smoothly, but tiles only exist at whole levels, so the nearest one is scaled to fit).
-    center: (f64, f64),
-    zoom: f32,
+    pub(super) center: (f64, f64),
+    pub(super) zoom: f32,
     tiles: HashMap<TileKey, TileState>,
     layer: Layer,
     layers_open: bool,
     files: Vec<LoadedFile>,
     error: Option<String>,
     canvas: Option<Rect>,
-    client: reqwest::Client,
+    pub(super) client: reqwest::Client,
     /// The timeline's moment, scrubbed to, dragged to or played to: the map then marks each
     /// track's fix closest to it instead of its last one.
     cursor_time: Option<i64>,
@@ -697,15 +697,30 @@ fn file_name(path: &Path) -> String {
 
 /// Centres on, and zooms as far as possible into, a bounding box — a single point zooms in
 /// close rather than all the way, since there is nothing more to see there.
-fn fit_bounds(app: &mut RidgeApp, (min_lat, max_lat, min_lon, max_lon): (f64, f64, f64, f64)) {
+fn fit_bounds(app: &mut RidgeApp, bounds: (f64, f64, f64, f64)) {
     let size = app
         .map
         .canvas
         .map(|r| r.size())
         .unwrap_or(Vec2::new(900.0, 700.0));
-    app.map.center = ((min_lat + max_lat) / 2.0, (min_lon + max_lon) / 2.0);
+    let mut view = Viewport {
+        center: app.map.center,
+        zoom: app.map.zoom,
+    };
+    fit(&mut view, size, bounds);
+    app.map.center = view.center;
+    app.map.zoom = view.zoom;
+}
+
+/// Points `view` at the box (south, north, west, east) so it fills a canvas of `size`.
+pub(super) fn fit(
+    view: &mut Viewport,
+    size: Vec2,
+    (min_lat, max_lat, min_lon, max_lon): (f64, f64, f64, f64),
+) {
+    view.center = ((min_lat + max_lat) / 2.0, (min_lon + max_lon) / 2.0);
     if min_lat == max_lat && min_lon == max_lon {
-        app.map.zoom = 14.0;
+        view.zoom = 14.0;
         return;
     }
     let mut zoom = MAX_ZOOM;
@@ -717,7 +732,7 @@ fn fit_bounds(app: &mut RidgeApp, (min_lat, max_lat, min_lon, max_lon): (f64, f6
         }
         zoom -= 1.0;
     }
-    app.map.zoom = zoom;
+    view.zoom = zoom;
 }
 
 /// Loads (from the disk cache, or the tile server) the one tile `key` names, if it isn't
@@ -818,9 +833,49 @@ pub(super) fn tile_loaded(app: &mut RidgeApp, key: TileKey, image: Option<egui::
     app.map.tiles.insert(key, state);
 }
 
+/// Where a basemap is looking: its centre (latitude, longitude) and how far in.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct Viewport {
+    pub center: (f64, f64),
+    pub zoom: f32,
+}
+
+/// What a frame's basemap was drawn with, to place things over it.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct Projection {
+    area: Rect,
+    center_world: (f64, f64),
+    zoom: f64,
+}
+
+impl Projection {
+    pub(super) fn to_screen(self, lat: f64, lon: f64) -> Pos2 {
+        Pos2::new(
+            self.area.center().x + (lon_to_x(lon, self.zoom) - self.center_world.0) as f32,
+            self.area.center().y + (lat_to_y(lat, self.zoom) - self.center_world.1) as f32,
+        )
+    }
+
+    /// The (south, west, north, east) edges of the area.
+    pub(super) fn bounds(&self) -> (f64, f64, f64, f64) {
+        let (w, h) = (
+            self.area.width() as f64 / 2.0,
+            self.area.height() as f64 / 2.0,
+        );
+        let (cx, cy) = self.center_world;
+        (
+            y_to_lat(cy + h, self.zoom),
+            x_to_lon(cx - w, self.zoom),
+            y_to_lat(cy - h, self.zoom),
+            x_to_lon(cx + w, self.zoom),
+        )
+    }
+}
+
 /// The layer selector at the canvas's bottom-left corner, as Google Maps has it: a card with
-/// the current layer that opens into one card per basemap.
-fn layer_selector(app: &mut RidgeApp, ui: &egui::Ui, area: Rect) {
+/// the current layer that opens into one card per basemap, each showing the map as that layer
+/// draws it right here.
+fn layer_selector(app: &mut RidgeApp, ui: &egui::Ui, area: Rect, view: &Viewport) {
     egui::Area::new(egui::Id::unique("map_layers"))
         .order(egui::Order::Foreground)
         .fixed_pos(area.left_bottom() + Vec2::new(10.0, -10.0))
@@ -837,14 +892,36 @@ fn layer_selector(app: &mut RidgeApp, ui: &egui::Ui, area: Rect) {
                     };
                     for layer in cards {
                         let (rect, r) =
-                            ui.allocate_exact_size(Vec2::new(64.0, 56.0), egui::Sense::click());
+                            ui.allocate_exact_size(Vec2::new(84.0, 66.0), egui::Sense::click());
+                        // a piece of the map under the view's centre, from a wider level
+                        let (key, uv) = sample(layer, view);
+                        ensure_tile(app, key);
+                        match app.map.tiles.get(&key) {
+                            Some(TileState::Ready(tex)) => {
+                                egui::Image::new((tex.id(), rect.size()))
+                                    .uv(uv)
+                                    .corner_radius(6.0)
+                                    .paint_at(ui, rect);
+                            }
+                            _ => {
+                                ui.painter().rect_filled(rect, 6.0, layer.swatch());
+                            }
+                        }
                         let painter = ui.painter();
-                        painter.rect_filled(rect, 6.0, layer.swatch());
                         let label_bg = Rect::from_min_max(
-                            Pos2::new(rect.left(), rect.bottom() - 18.0),
+                            Pos2::new(rect.left(), rect.bottom() - 20.0),
                             rect.right_bottom(),
                         );
-                        painter.rect_filled(label_bg, 6.0, Color32::from_black_alpha(160));
+                        painter.rect_filled(
+                            label_bg,
+                            egui::CornerRadius {
+                                nw: 0,
+                                ne: 0,
+                                sw: 6,
+                                se: 6,
+                            },
+                            Color32::from_black_alpha(170),
+                        );
                         painter.text(
                             label_bg.center(),
                             egui::Align2::CENTER_CENTER,
@@ -879,22 +956,51 @@ fn layer_selector(app: &mut RidgeApp, ui: &egui::Ui, area: Rect) {
         });
 }
 
-fn canvas(app: &mut RidgeApp, ui: &mut egui::Ui) {
-    let area = ui.available_rect_before_wrap();
-    let response = ui.allocate_rect(area, egui::Sense::click_and_drag());
+/// The tile and the part of it (as a texture window) that show `layer` around the view's centre,
+/// three levels out so a card holds a neighbourhood rather than a few streets.
+fn sample(layer: Layer, view: &Viewport) -> (TileKey, Rect) {
+    let z = (view.zoom.round() as i32 - 3).clamp(2, layer.max_zoom() as i32);
+    let (wx, wy) = (
+        lon_to_x(view.center.1, z as f64) / TILE_SIZE,
+        lat_to_y(view.center.0, z as f64) / TILE_SIZE,
+    );
+    let across = 1i64 << z;
+    let (tx, ty) = (wx.floor(), wy.floor());
+    let key = TileKey {
+        layer,
+        z: z as u8,
+        x: (tx as i64).rem_euclid(across) as u32,
+        y: (ty as i64).clamp(0, across - 1) as u32,
+    };
+    let (w, h) = (0.4f32, 0.32f32);
+    let u = (((wx - tx) as f32) - w / 2.0).clamp(0.0, 1.0 - w);
+    let v = (((wy - ty) as f32) - h / 2.0).clamp(0.0, 1.0 - h);
+    (key, Rect::from_min_size(Pos2::new(u, v), Vec2::new(w, h)))
+}
+
+/// Draws the basemap in `area` as `view` looks at it, with its layer selector and attribution,
+/// and moves and zooms `view` with the pointer. Anything else is drawn over it by the caller.
+pub(super) fn basemap(
+    app: &mut RidgeApp,
+    ui: &mut egui::Ui,
+    area: Rect,
+    response: &egui::Response,
+    view: &mut Viewport,
+) -> Projection {
     let painter = ui.painter_at(area);
     painter.rect_filled(area, 0.0, Color32::from_rgb(0x1a, 0x1c, 0x1f));
-    app.map.canvas = Some(area);
 
-    let zoom = app.map.zoom as f64;
+    let zoom = view.zoom as f64;
     let layer = app.map.layer;
-    let tile_zoom = (app.map.zoom.round().clamp(MIN_ZOOM, layer.max_zoom())) as i32;
+    let tile_zoom = (view.zoom.round().clamp(MIN_ZOOM, layer.max_zoom())) as i32;
     // tile-space pixels, scaled up to this frame's (possibly in-between) zoom level
     let scale = 2f64.powf(zoom - tile_zoom as f64);
-    let center_world = (
-        lon_to_x(app.map.center.1, zoom),
-        lat_to_y(app.map.center.0, zoom),
-    );
+    let center_world = (lon_to_x(view.center.1, zoom), lat_to_y(view.center.0, zoom));
+    let projection = Projection {
+        area,
+        center_world,
+        zoom,
+    };
     let to_screen = |wx: f64, wy: f64| -> Pos2 {
         Pos2::new(
             area.center().x + (wx - center_world.0) as f32,
@@ -948,8 +1054,6 @@ fn canvas(app: &mut RidgeApp, ui: &mut egui::Ui) {
             }
         }
     }
-
-    let cursor_time = app.map.cursor_time;
     painter.text(
         area.right_bottom() - Vec2::new(8.0, 6.0),
         egui::Align2::RIGHT_BOTTOM,
@@ -957,12 +1061,70 @@ fn canvas(app: &mut RidgeApp, ui: &mut egui::Ui) {
         egui::FontId::proportional(11.0),
         Color32::from_white_alpha(if layer == Layer::Streets { 140 } else { 110 }),
     );
+    layer_selector(app, ui, area, view);
+
+    if response.dragged() {
+        let d = response.drag_delta();
+        let moved = (center_world.0 - d.x as f64, center_world.1 - d.y as f64);
+        view.center = (y_to_lat(moved.1, zoom), x_to_lon(moved.0, zoom));
+    }
+
+    if let Some(p) = response.hover_pos() {
+        let (pinch, scroll) = ui.input(|i| (i.zoom_delta(), i.smooth_scroll_delta.y));
+        let delta = if pinch != 1.0 {
+            pinch.log2()
+        } else if scroll.abs() > 0.5 {
+            scroll.signum() * 0.4
+        } else {
+            0.0
+        };
+        if delta != 0.0 {
+            let new_zoom = (view.zoom + delta).clamp(MIN_ZOOM, MAX_ZOOM);
+            let new_zoom = new_zoom.min(layer.max_zoom() + 2.0);
+            if new_zoom != view.zoom {
+                let offset = (p.x - area.center().x, p.y - area.center().y);
+                let anchor = (
+                    x_to_lon(center_world.0 + offset.0 as f64, zoom),
+                    y_to_lat(center_world.1 + offset.1 as f64, zoom),
+                );
+                view.zoom = new_zoom;
+                let zoom2 = new_zoom as f64;
+                let anchor_world = (lon_to_x(anchor.0, zoom2), lat_to_y(anchor.1, zoom2));
+                let center_world2 = (
+                    anchor_world.0 - offset.0 as f64,
+                    anchor_world.1 - offset.1 as f64,
+                );
+                view.center = (
+                    y_to_lat(center_world2.1, zoom2),
+                    x_to_lon(center_world2.0, zoom2),
+                );
+            }
+        }
+    }
+    projection
+}
+
+fn canvas(app: &mut RidgeApp, ui: &mut egui::Ui) {
+    let area = ui.available_rect_before_wrap();
+    let response = ui.allocate_rect(area, egui::Sense::click_and_drag());
+    let painter = ui.painter_at(area);
+    app.map.canvas = Some(area);
+
+    let mut view = Viewport {
+        center: app.map.center,
+        zoom: app.map.zoom,
+    };
+    let projection = basemap(app, ui, area, &response, &mut view);
+    app.map.center = view.center;
+    app.map.zoom = view.zoom;
+
+    let cursor_time = app.map.cursor_time;
     for file in app.map.files.iter().filter(|f| f.on_map) {
         for track in &file.tracks {
             let points: Vec<Pos2> = track
                 .points
                 .iter()
-                .map(|f| to_screen(lon_to_x(f.lon, zoom), lat_to_y(f.lat, zoom)))
+                .map(|f| projection.to_screen(f.lat, f.lon))
                 .collect();
             if points.len() > 1 {
                 painter.add(egui::Shape::line(
@@ -979,47 +1141,6 @@ fn canvas(app: &mut RidgeApp, ui: &mut egui::Ui) {
             if let Some(&at) = points.get(marked) {
                 painter.circle_filled(at, 5.0, file.color);
                 painter.circle_stroke(at, 5.0, Stroke::new(1.5, Color32::BLACK));
-            }
-        }
-    }
-
-    layer_selector(app, ui, area);
-
-    if response.dragged() {
-        let d = response.drag_delta();
-        let moved = (center_world.0 - d.x as f64, center_world.1 - d.y as f64);
-        app.map.center = (y_to_lat(moved.1, zoom), x_to_lon(moved.0, zoom));
-    }
-
-    if let Some(p) = response.hover_pos() {
-        let (pinch, scroll) = ui.input(|i| (i.zoom_delta(), i.smooth_scroll_delta.y));
-        let delta = if pinch != 1.0 {
-            pinch.log2()
-        } else if scroll.abs() > 0.5 {
-            scroll.signum() * 0.4
-        } else {
-            0.0
-        };
-        if delta != 0.0 {
-            let new_zoom = (app.map.zoom + delta).clamp(MIN_ZOOM, MAX_ZOOM);
-            let new_zoom = new_zoom.min(layer.max_zoom() + 2.0);
-            if new_zoom != app.map.zoom {
-                let offset = (p.x - area.center().x, p.y - area.center().y);
-                let anchor = (
-                    x_to_lon(center_world.0 + offset.0 as f64, zoom),
-                    y_to_lat(center_world.1 + offset.1 as f64, zoom),
-                );
-                app.map.zoom = new_zoom;
-                let zoom2 = new_zoom as f64;
-                let anchor_world = (lon_to_x(anchor.0, zoom2), lat_to_y(anchor.1, zoom2));
-                let center_world2 = (
-                    anchor_world.0 - offset.0 as f64,
-                    anchor_world.1 - offset.1 as f64,
-                );
-                app.map.center = (
-                    y_to_lat(center_world2.1, zoom2),
-                    x_to_lon(center_world2.0, zoom2),
-                );
             }
         }
     }

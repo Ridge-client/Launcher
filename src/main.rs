@@ -10,6 +10,7 @@ mod cli;
 mod depix;
 mod graph;
 mod gui;
+mod overpass;
 mod persona;
 mod photo;
 mod sun;

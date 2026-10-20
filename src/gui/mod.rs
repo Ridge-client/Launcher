@@ -11,6 +11,7 @@ mod graph_view;
 mod help_view;
 mod icons;
 mod map_view;
+mod overpass_view;
 mod persona_view;
 mod settings_view;
 mod sun_view;
@@ -67,6 +68,8 @@ enum Msg {
         key: map_view::TileKey,
         image: Option<egui::ColorImage>,
     },
+    /// What an Overpass query found, or why it failed.
+    Overpass(Result<Vec<crate::overpass::Feature>, String>),
 }
 
 #[derive(Debug, Clone, Default)]
@@ -92,6 +95,7 @@ enum Tab {
     Depix,
     Shadows,
     Map,
+    Overpass,
     Versions,
     Help,
     Settings,
@@ -135,6 +139,7 @@ struct RidgeApp {
     graph: graph_view::State,
     annotate: annotate_view::State,
     depix: depix_view::State,
+    overpass: overpass_view::State,
     shadows: sun_view::State,
     map: map_view::State,
     settings: settings_view::State,
@@ -169,6 +174,7 @@ impl RidgeApp {
             graph: graph_view::State::load(cc.storage),
             annotate: annotate_view::State::default(),
             depix: depix_view::State::default(),
+            overpass: overpass_view::State::default(),
             shadows: sun_view::State::default(),
             map: map_view::State::default(),
             settings: settings_view::State::default(),
@@ -234,6 +240,7 @@ impl RidgeApp {
                 Msg::UpdateDownloaded(result) => update_view::downloaded(self, result),
                 Msg::Releases(result) => self.versions.loaded(result),
                 Msg::TileLoaded { key, image } => map_view::tile_loaded(self, key, image),
+                Msg::Overpass(result) => overpass_view::loaded(self, result),
             }
         }
     }
@@ -267,7 +274,8 @@ impl eframe::App for RidgeApp {
                         (Tab::Annotate, "Annotate"),
                         (Tab::Depix, "Depix"),
                         (Tab::Shadows, "Shadows"),
-                        (Tab::Map, "Map"),
+                        (Tab::Map, "Tracking"),
+                        (Tab::Overpass, "Overpass"),
                     ] {
                         if nav_button(ui, label, self.tab == tab).clicked() {
                             self.tab = tab;
@@ -321,6 +329,7 @@ impl eframe::App for RidgeApp {
             Tab::Depix => depix_view::show(self, ui),
             Tab::Shadows => sun_view::show(self, ui),
             Tab::Map => map_view::show(self, ui),
+            Tab::Overpass => overpass_view::show(self, ui),
             Tab::Versions => versions_view::show(self, ui),
             Tab::Help => help_view::show(self, ui),
             Tab::Settings => settings_view::show(self, ui),

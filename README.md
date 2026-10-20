@@ -52,6 +52,7 @@ Ridge keeps itself up to date: an orange dot by **Versions**, at the right of th
 * **Graph**: add entities from the palette (people, accounts, places, money, infrastructure…), link them, arrange them with a layout, and **Save** the graph to a file (Ctrl+S).
 * **Annotate**: open several pictures (left panel), draw numbered boxes in 16 colours with the Annotate tool, renumber and caption them, move and zoom with the Pointer tool, and **Export PNG** (or all at once).
 * **Depix**: recover text from a pixelated screenshot by matching its blocks against a reference typed in the same font.
+* **Overpass**: query OpenStreetMap's Overpass API and see the results on the map, with Examples, a result list with tags, and GeoJSON export.
 * **Shadows**: find when a picture was taken from its shadows. Type the place, the way the camera faced (or draw it on a map screenshot), where the shadows point and how long they are next to the object, and Ridge lists the dates and times the sun stood like that, with its path drawn on a sky chart. **Copy** puts the clues and candidates on the clipboard for your report.
 * **Settings**: choose what the personas are kept away from (this PC, your home network, each other) and **Run checks** to prove it.
 

@@ -7,7 +7,7 @@ use super::{caps, card, page_title, primary_button, RidgeApp, NAV_MUTED, NAV_TEX
 const ISSUES: &str = "https://github.com/Ridge-client/Launcher/issues/new";
 
 /// Each tab: its name and how it works, a line at a time.
-const TABS: [(&str, &[&str]); 9] = [
+const TABS: [(&str, &[&str]); 10] = [
     (
         "OSINT tools",
         &[
@@ -54,10 +54,17 @@ const TABS: [(&str, &[&str]); 9] = [
         ],
     ),
     (
-        "Map",
+        "Tracking",
         &[
             "Add files… (or drop one on the map) opens a track: NMEA 0183 (GPS fixes and AIS position reports), GPX, KML/KMZ, or an ADS-B SBS log — a plane, a boat or a car's path.",
             "Each file gets its own colour; the checkbox hides it, Fit centres the map on it, and the basemap tiles are cached so revisiting a place doesn't ask OpenStreetMap again.",
+        ],
+    ),
+    (
+        "Overpass",
+        &[
+            "Asks OpenStreetMap's Overpass API for places and shows them on the map: write a query on the left (or pick one under Examples) and Run.",
+            "{{bbox}} in a query stands for the part of the map in view and {{center}} for its middle. Click a result or a marker to see its tags; Export saves them as GeoJSON.",
         ],
     ),
     (
