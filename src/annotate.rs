@@ -7,7 +7,7 @@ use image::{Rgba, RgbaImage};
 use serde::{Deserialize, Serialize};
 
 /// The colours to mark with, in palette order.
-pub const COLOURS: [[u8; 3]; 8] = [
+pub const COLOURS: [[u8; 3]; 16] = [
     [0xe5, 0x39, 0x35], // red
     [0xfb, 0x8c, 0x00], // orange
     [0xfd, 0xd8, 0x35], // yellow
@@ -16,9 +16,17 @@ pub const COLOURS: [[u8; 3]; 8] = [
     [0x1e, 0x88, 0xe5], // blue
     [0x8e, 0x24, 0xaa], // purple
     [0xff, 0xff, 0xff], // white
+    [0xec, 0x40, 0x7a], // pink
+    [0xc0, 0xca, 0x33], // lime
+    [0x00, 0x89, 0x7b], // teal
+    [0x81, 0xd4, 0xfa], // light blue
+    [0x8d, 0x6e, 0x63], // brown
+    [0x9e, 0x9e, 0x9e], // grey
+    [0x1a, 0x23, 0x7e], // navy
+    [0x00, 0x00, 0x00], // black
 ];
 
-/// One open square on the picture; its number is its place in the list, from 1.
+/// One open square on the picture; its number is its place in the list, from 1, unless set.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Mark {
@@ -26,6 +34,8 @@ pub struct Mark {
     pub rect: [f32; 4],
     pub colour: [u8; 3],
     pub caption: String,
+    /// A number chosen by hand, in place of the automatic one.
+    pub number: Option<u32>,
 }
 
 impl Default for Mark {
@@ -34,11 +44,17 @@ impl Default for Mark {
             rect: [0.0; 4],
             colour: COLOURS[0],
             caption: String::new(),
+            number: None,
         }
     }
 }
 
 impl Mark {
+    /// The number shown for the square at `index` in the list.
+    pub fn label(&self, index: usize) -> u32 {
+        self.number.unwrap_or(index as u32 + 1)
+    }
+
     /// The same square with left < right and top < bottom, kept inside a `w` × `h` picture.
     pub fn normalised(rect: [f32; 4], w: f32, h: f32) -> [f32; 4] {
         let (l, r) = (rect[0].min(rect[2]), rect[0].max(rect[2]));
@@ -95,7 +111,7 @@ pub fn render(picture: &RgbaImage, marks: &[Mark]) -> Result<RgbaImage> {
         let [l, t, r, b] = Mark::normalised(mark.rect, w as f32, h as f32);
         outline(&mut out, [l, t, r, b], stroke, colour);
         // the number on a filled tab at the top-left corner, above the square when there is room
-        let label = (i + 1).to_string();
+        let label = mark.label(i).to_string();
         let text_w = text_width(&number_font, &label, badge * 0.8);
         let tab = [badge.max(text_w + badge * 0.5), badge];
         let top = if t - tab[1] >= 0.0 { t - tab[1] } else { t };
@@ -229,11 +245,13 @@ mod tests {
                 rect: [100.0, 100.0, 200.0, 180.0],
                 colour: COLOURS[0],
                 caption: "Parked car".into(),
+                number: None,
             },
             Mark {
                 rect: [250.0, 40.0, 350.0, 120.0],
                 colour: COLOURS[4],
                 caption: String::new(),
+                number: Some(12),
             },
         ];
         let out = render(&picture, &marks).unwrap();
@@ -259,6 +277,16 @@ mod tests {
     }
 
     #[test]
+    fn numbers_follow_the_list_unless_set() {
+        let auto = Mark::default();
+        let set = Mark {
+            number: Some(9),
+            ..Mark::default()
+        };
+        assert_eq!((auto.label(0), auto.label(4), set.label(0)), (1, 5, 9));
+    }
+
+    #[test]
     fn nothing_marked_adds_no_legend() {
         let picture = RgbaImage::from_pixel(50, 40, Rgba([9, 9, 9, 255]));
         let out = render(&picture, &[]).unwrap();
@@ -274,6 +302,7 @@ mod tests {
                 rect: [1.0, 2.0, 3.0, 4.0],
                 colour: COLOURS[2],
                 caption: "Gate".into(),
+                number: Some(7),
             }],
         }];
         let back: Vec<Annotated> = ron::from_str(&ron::ser::to_string(&a).unwrap()).unwrap();

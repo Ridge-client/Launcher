@@ -66,6 +66,12 @@ impl Zoom {
         self.pan = self.pan.clamp(-slack, slack);
     }
 
+    /// Drags the picture by `delta` screen points (a no-op while it is fitted).
+    pub(super) fn pan_by(&mut self, delta: Vec2, area: Rect, size: [f32; 2]) {
+        self.pan += delta;
+        self.keep_in(area, size);
+    }
+
     /// The pointer's zoom and pan gestures over the canvas `response`.
     pub(super) fn interact(
         &mut self,
