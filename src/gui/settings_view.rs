@@ -1,6 +1,6 @@
-//! "Settings" tab: the protections that keep every persona's browser away from this PC, the home
-//! network and the other personas, and checks run from inside each running persona to show what
-//! it can actually reach.
+//! "Settings" page, laid out as the Cairn launcher's: the protections that keep every persona's
+//! browser away from this PC, the home network and the other personas, and checks run from
+//! inside each running persona to show what it can actually reach.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
@@ -9,7 +9,9 @@ use eframe::egui;
 
 use super::icons;
 use super::persona_view::{self, ALL_PERSONAS};
-use super::{Msg, RidgeApp};
+use super::{
+    caps, primary_button, secondary_button, Msg, RidgeApp, NAV_ACCENT, NAV_MUTED, NAV_TEXT,
+};
 use crate::catalog::health;
 use crate::persona::docker::Manager;
 use crate::persona::firewall::{self, Check, OtherPersona, Protections};
@@ -26,6 +28,16 @@ pub(super) struct State {
     results: BTreeMap<String, Result<Vec<Check>, String>>,
     /// Switches changed but not applied yet.
     draft: Option<Protections>,
+    page: Page,
+    search: String,
+}
+
+/// The page's tabs.
+#[derive(Default, Clone, Copy, PartialEq, Eq)]
+enum Page {
+    #[default]
+    Protections,
+    Checks,
 }
 
 impl State {
@@ -40,15 +52,97 @@ impl State {
 }
 
 pub(super) fn show(app: &mut RidgeApp, ui: &mut egui::Ui) {
-    ui.add_space(8.0);
-    ui.heading("Settings");
-    ui.add_space(10.0);
     egui::ScrollArea::vertical()
         .id_salt("settings")
         .auto_shrink(false)
         .show(ui, |ui| {
-            protections_section(app, ui);
+            // one centred column
+            let width = ui.available_width().min(760.0);
+            let side = ((ui.available_width() - width) / 2.0).max(0.0);
+            ui.horizontal_top(|ui| {
+                ui.add_space(side);
+                ui.vertical(|ui| {
+                    ui.set_width(width);
+                    column(app, ui);
+                });
+            });
         });
+}
+
+fn column(app: &mut RidgeApp, ui: &mut egui::Ui) {
+    ui.add_space(30.0);
+    ui.vertical_centered(|ui| {
+        ui.label(caps("Settings", 20.0).strong().color(NAV_TEXT));
+    });
+    ui.add_space(18.0);
+    let search = ui.add(
+        egui::TextEdit::singleline(&mut app.settings.search)
+            .hint_text("Search settings")
+            .desired_width(f32::INFINITY)
+            .margin(egui::Margin::symmetric(14, 10))
+            .font(egui::FontId::proportional(16.0)),
+    );
+    if search.changed() && !app.settings.search.trim().is_empty() {
+        app.settings.page = Page::Protections;
+    }
+    ui.add_space(14.0);
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 2.0;
+        for (page, label) in [(Page::Protections, "Protections"), (Page::Checks, "Checks")] {
+            if sub_tab(ui, label, app.settings.page == page).clicked() {
+                app.settings.page = page;
+            }
+        }
+    });
+    let r = ui.min_rect();
+    ui.painter().hline(
+        r.x_range(),
+        ui.cursor().top() - ui.spacing().item_spacing.y / 2.0,
+        egui::Stroke::new(1.0, egui::Color32::from_white_alpha(26)),
+    );
+    ui.add_space(18.0);
+    match app.settings.page {
+        Page::Protections => protections_section(app, ui),
+        Page::Checks => {
+            let running = persona_view::running_saved(app);
+            checks(app, ui, &running);
+        }
+    }
+}
+
+/// A tab of the page: its name, white with an amber line under it when open.
+fn sub_tab(ui: &mut egui::Ui, label: &str, active: bool) -> egui::Response {
+    let font = egui::FontId::proportional(17.0);
+    let galley = ui
+        .painter()
+        .layout_no_wrap(label.to_string(), font.clone(), NAV_TEXT);
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(galley.size().x + 40.0, 44.0),
+        egui::Sense::click(),
+    );
+    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    ui.painter().text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        label,
+        font,
+        if active || response.hovered() {
+            NAV_TEXT
+        } else {
+            NAV_MUTED
+        },
+    );
+    if active {
+        ui.painter().rect_filled(
+            egui::Rect::from_min_max(
+                egui::pos2(rect.left() + 12.0, rect.bottom() - 2.0),
+                egui::pos2(rect.right() - 12.0, rect.bottom()),
+            ),
+            1.0,
+            NAV_ACCENT,
+        );
+    }
+    response
 }
 
 /// Results key of the test persona the checks make.
@@ -130,49 +224,64 @@ fn protections_section(app: &mut RidgeApp, ui: &mut egui::Ui) {
     });
     let mixed = |i: usize| app.settings.draft.is_none() && effect[i].is_none();
     let mixed = [mixed(0), mixed(1), mixed(2), mixed(3)];
+    let search = app.settings.search.trim().to_lowercase();
     let mut changed = false;
-    section(ui, "Protections", |ui| {
-        ui.weak("What every persona's browser is kept away from.");
-        ui.add_space(4.0);
-        for (i, (on, label, hint)) in [
-            (
-                &mut p.block_pc,
-                "Block this PC",
-                "File sharing, remote access and the other services of this computer",
-            ),
-            (
-                &mut p.block_lan,
-                "Block my home network",
-                "The router and every other device on your network",
-            ),
-            (
-                &mut p.block_personas,
-                "Block other personas",
-                "Personas can't reach each other, directly or through this PC",
-            ),
-            (
-                &mut p.password,
-                "Password-protect the remote screen",
-                "Other programs on this PC can't open a persona's browser; Ridge fills the password in",
-            ),
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            changed |= switch(ui, on, mixed[i], label, hint);
+    let mut shown = 0;
+    ui.label(
+        egui::RichText::new("What every persona's browser is kept away from.")
+            .size(15.0)
+            .color(NAV_MUTED),
+    );
+    ui.add_space(14.0);
+    for (i, (on, label, hint)) in [
+        (
+            &mut p.block_pc,
+            "Block this PC",
+            "File sharing, remote access and the other services of this computer.",
+        ),
+        (
+            &mut p.block_lan,
+            "Block my home network",
+            "The router and every other device on your network.",
+        ),
+        (
+            &mut p.block_personas,
+            "Block other personas",
+            "Personas can't reach each other, directly or through this PC.",
+        ),
+        (
+            &mut p.password,
+            "Password-protect the remote screen",
+            "Other programs on this PC can't open a persona's browser; Ridge fills the password in.",
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let text = format!("{label} {hint}").to_lowercase();
+        if !search.is_empty() && !text.contains(&search) {
+            continue;
         }
-        if changed {
-            app.settings.draft = Some(p);
-        }
-
-        ui.add_space(8.0);
-        apply_row(app, ui, &running, p);
-        ui.add_space(4.0);
-        checks(app, ui, &running);
-    });
+        shown += 1;
+        changed |= switch(ui, on, mixed[i], label, hint);
+        ui.add_space(14.0);
+    }
+    if shown == 0 {
+        ui.label(
+            egui::RichText::new("No setting matches.")
+                .size(15.0)
+                .color(NAV_MUTED),
+        );
+    }
+    if changed {
+        app.settings.draft = Some(p);
+    }
+    ui.add_space(10.0);
+    apply_row(app, ui, &running, p);
 }
 
-/// Apply: saves the switches and restarts the running personas that don't use them yet.
+/// The state of the switches, then Save & apply and Cancel: Save & apply saves them and
+/// restarts the running personas that don't use them yet; Cancel forgets the changes.
 fn apply_row(app: &mut RidgeApp, ui: &mut egui::Ui, running: &[String], target: Protections) {
     let idle = app.personas.busy.is_none() && !app.settings.busy();
     let outdated: Vec<String> = running
@@ -180,62 +289,91 @@ fn apply_row(app: &mut RidgeApp, ui: &mut egui::Ui, running: &[String], target: 
         .filter(|id| actual(app, id) != target)
         .cloned()
         .collect();
-    ui.horizontal(|ui| {
-        if ui
-            .add_enabled(
-                idle,
-                egui::Button::new(egui::RichText::new(icons::with(icons::SAVE, "Apply")).strong()),
-            )
-            .on_hover_text("Saves these protections and restarts the running personas that don't use them yet")
-            .clicked()
-        {
-            app.settings.draft = None;
-            app.personas.protections = target;
-            app.personas.errors.remove(ALL_PERSONAS);
-            if !outdated.is_empty() {
-                app.settings.results.clear();
-                persona_view::apply_protections(app, &outdated);
-            }
-        }
-        let n = outdated.len();
-        let plural = if n == 1 { "" } else { "s" };
-        match &app.personas.busy {
-            Some((busy_id, doing)) if busy_id == ALL_PERSONAS => {
+    let n = outdated.len();
+    let plural = if n == 1 { "" } else { "s" };
+    ui.vertical_centered(|ui| match &app.personas.busy {
+        Some((busy_id, doing)) if busy_id == ALL_PERSONAS => {
+            ui.horizontal(|ui| {
                 ui.spinner();
                 ui.weak(doing);
-            }
-            _ if n > 0 => {
-                ui.colored_label(
-                    UNSAFE,
-                    format!("{n} running persona{plural} don't use these yet: Apply restarts them (browser profiles are kept)."),
-                );
-            }
-            _ if app.settings.draft.is_some() => {
-                ui.weak("Not applied yet.");
-            }
-            _ if running.is_empty() => {
-                ui.weak("Personas use these each time they start.");
-            }
-            _ => {
-                ui.weak("In effect on every running persona.");
-            }
+            });
+        }
+        _ if n > 0 => {
+            ui.colored_label(
+                UNSAFE,
+                format!("{n} running persona{plural} don't use these yet: Save & apply restarts them (browser profiles are kept)."),
+            );
+        }
+        _ if app.settings.draft.is_some() => {
+            ui.weak("Not applied yet.");
+        }
+        _ if running.is_empty() => {
+            ui.weak("Personas use these each time they start.");
+        }
+        _ => {
+            ui.weak("In effect on every running persona.");
         }
     });
     if let Some((short, detail)) = app.personas.errors.get(ALL_PERSONAS) {
-        ui.colored_label(UNSAFE, icons::with(icons::ERROR, short))
-            .on_hover_text(detail);
+        ui.vertical_centered(|ui| {
+            ui.colored_label(UNSAFE, icons::with(icons::ERROR, short))
+                .on_hover_text(detail);
+        });
+    }
+    ui.add_space(28.0);
+    let (mut save, mut cancel) = (false, false);
+    // the two buttons, centred
+    let width = 220.0 + 12.0 + 140.0;
+    ui.horizontal(|ui| {
+        ui.add_space(((ui.available_width() - width) / 2.0).max(0.0));
+        save = ui
+            .add_enabled(
+                idle && (app.settings.draft.is_some() || n > 0),
+                primary_button("Save & apply").min_size(egui::vec2(220.0, 44.0)),
+            )
+            .on_hover_text(
+                "Saves these protections and restarts the running personas that don't use them yet",
+            )
+            .clicked();
+        ui.add_space(12.0);
+        cancel = ui
+            .add_enabled(
+                app.settings.draft.is_some(),
+                secondary_button("Cancel").min_size(egui::vec2(140.0, 44.0)),
+            )
+            .on_hover_text("Forget the changes")
+            .clicked();
+    });
+    if save {
+        app.settings.draft = None;
+        app.personas.protections = target;
+        app.personas.errors.remove(ALL_PERSONAS);
+        if !outdated.is_empty() {
+            app.settings.results.clear();
+            persona_view::apply_protections(app, &outdated);
+        }
+    }
+    if cancel {
+        app.settings.draft = None;
     }
 }
 
 /// Run checks: a test persona made with the saved protections, and every running persona.
 fn checks(app: &mut RidgeApp, ui: &mut egui::Ui, running: &[String]) {
     let idle = app.personas.busy.is_none() && !app.settings.busy();
+    ui.label(
+        egui::RichText::new(
+            "Proof that the protections hold: Ridge tries to reach your PC, your router and the \
+             other personas from a test persona made with the saved protections, and from inside \
+             each running persona.",
+        )
+        .size(15.0)
+        .color(NAV_MUTED),
+    );
+    ui.add_space(14.0);
     ui.horizontal(|ui| {
         if ui
-            .add_enabled(
-                idle,
-                egui::Button::new(icons::with(icons::SHIELD, "Run checks")),
-            )
+            .add_enabled(idle, primary_button("Run checks"))
             .on_hover_text(
                 "Tries to reach your PC, router and personas from a test persona made with the \
                  applied protections, and from inside each running persona",
@@ -326,21 +464,22 @@ pub(super) fn section(ui: &mut egui::Ui, title: &str, body: impl FnOnce(&mut egu
         });
 }
 
-/// A switch; `mixed` when running personas differ. Returns whether it was clicked.
+/// A switch, as the Cairn launcher's: a box and the setting in spaced capitals, what it does
+/// under it. `mixed` when running personas differ. Returns whether it was clicked.
 fn switch(ui: &mut egui::Ui, on: &mut bool, mixed: bool, label: &str, hint: &str) -> bool {
-    ui.horizontal(|ui| {
-        let clicked = ui
-            .add(egui::Checkbox::new(on, label).indeterminate(mixed))
-            .on_hover_text_at_pointer(if mixed {
-                "On for some running personas, off for others"
-            } else {
-                hint
-            })
-            .changed();
-        ui.weak(hint);
-        clicked
-    })
-    .inner
+    let clicked = ui
+        .add(
+            egui::Checkbox::new(on, caps(label, 13.5).color(NAV_MUTED).monospace())
+                .indeterminate(mixed),
+        )
+        .on_hover_text_at_pointer(if mixed {
+            "On for some running personas, off for others"
+        } else {
+            hint
+        })
+        .changed();
+    ui.label(egui::RichText::new(hint).size(15.0).color(NAV_MUTED));
+    clicked
 }
 
 /// The running personas other than `id`, to try reaching them.

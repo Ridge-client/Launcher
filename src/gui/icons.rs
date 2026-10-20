@@ -23,7 +23,6 @@ pub const USER: &str = "\u{E4C2}"; // user
 pub const EDIT: &str = "\u{E3B4}"; // pencil-simple
 pub const SAVE: &str = "\u{E248}"; // floppy-disk
 pub const CHECK: &str = "\u{E184}"; // check-circle
-pub const SHIELD: &str = "\u{E40C}"; // shield-check
 pub const ATTACH: &str = "\u{E39C}"; // paperclip
 pub const FILE: &str = "\u{E230}"; // file
 pub const FILE_TEXT: &str = "\u{E23A}"; // file-text

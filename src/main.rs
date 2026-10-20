@@ -10,6 +10,7 @@ mod cli;
 mod graph;
 mod gui;
 mod persona;
+mod photo;
 mod sun;
 mod ui;
 mod update;

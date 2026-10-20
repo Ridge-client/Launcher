@@ -189,7 +189,7 @@ fn toolbar(st: &mut State, ui: &mut egui::Ui) {
         ui.separator();
         if let (Some((.., size)), Some(canvas)) = (&st.texture, st.canvas) {
             let size = *size;
-            st.zoom.buttons(ui, canvas, size);
+            st.zoom.buttons(ui, canvas, size, false);
             ui.separator();
         }
         if ui

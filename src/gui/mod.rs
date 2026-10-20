@@ -7,11 +7,13 @@ mod annotate_view;
 mod browser;
 mod catalog_view;
 mod graph_view;
+mod help_view;
 mod icons;
 mod persona_view;
 mod settings_view;
 mod sun_view;
 mod update_view;
+mod versions_view;
 mod zoom;
 
 use std::collections::{BTreeMap, HashMap};
@@ -55,6 +57,8 @@ enum Msg {
     /// The update's download: progress (0..1), then the checked Setup.
     UpdateProgress(f32),
     UpdateDownloaded(Result<PathBuf, String>),
+    /// Every release, for the Versions page's changelog.
+    Releases(Result<Vec<crate::update::Release>, String>),
 }
 
 #[derive(Debug, Clone, Default)]
@@ -78,6 +82,8 @@ enum Tab {
     Graph,
     Annotate,
     Shadows,
+    Versions,
+    Help,
     Settings,
 }
 
@@ -121,6 +127,7 @@ struct RidgeApp {
     shadows: sun_view::State,
     settings: settings_view::State,
     update: update_view::State,
+    versions: versions_view::State,
 }
 
 impl RidgeApp {
@@ -132,6 +139,10 @@ impl RidgeApp {
         annotate_view::forget_old_copies();
         let ctx = cc.egui_ctx.clone();
         ctx.set_theme(egui::Theme::Dark);
+        // every button shows the hand over it
+        ctx.all_styles_mut(|style| {
+            style.visuals.interact_cursor = Some(egui::CursorIcon::PointingHand)
+        });
         icons::install(&ctx);
         let (tx, rx) = channel();
         let mut app = Self {
@@ -145,9 +156,10 @@ impl RidgeApp {
             personas: persona_view::State::load(cc.storage),
             graph: graph_view::State::load(cc.storage),
             annotate: annotate_view::State::default(),
-            shadows: sun_view::State::load(cc.storage),
+            shadows: sun_view::State::default(),
             settings: settings_view::State::default(),
             update: update_view::State::default(),
+            versions: versions_view::State::default(),
         };
         catalog_view::check_on_start(&mut app);
         app
@@ -206,6 +218,7 @@ impl RidgeApp {
                 Msg::UpdateChecked { result, asked } => update_view::checked(self, result, asked),
                 Msg::UpdateProgress(p) => update_view::progress(self, p),
                 Msg::UpdateDownloaded(result) => update_view::downloaded(self, result),
+                Msg::Releases(result) => self.versions.loaded(result),
             }
         }
     }
@@ -216,7 +229,6 @@ impl eframe::App for RidgeApp {
         self.tools.save(storage);
         self.personas.save(storage);
         self.graph.save(storage);
-        self.shadows.save(storage);
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
@@ -239,19 +251,41 @@ impl eframe::App for RidgeApp {
                         (Tab::Graph, "Graph"),
                         (Tab::Annotate, "Annotate"),
                         (Tab::Shadows, "Shadows"),
-                        (Tab::Settings, "Settings"),
                     ] {
                         if nav_button(ui, label, self.tab == tab).clicked() {
                             self.tab = tab;
                         }
                     }
+                    // Versions, Help and Settings on the right, as the Cairn launcher has them
+                    // (added right to left); an orange dot by Versions when an update is out
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.spacing_mut().item_spacing.x = 2.0;
+                        let update = update_view::available(self).map(|u| u.tag.clone());
+                        for (tab, label) in [
+                            (Tab::Settings, "Settings"),
+                            (Tab::Help, "Help"),
+                            (Tab::Versions, "Versions"),
+                        ] {
+                            let r = nav_button(ui, label, self.tab == tab);
+                            if tab == Tab::Versions {
+                                if let Some(tag) = &update {
+                                    ui.painter().circle_filled(
+                                        egui::pos2(r.rect.right() - 9.0, r.rect.center().y - 7.0),
+                                        3.5,
+                                        NAV_ACCENT,
+                                    );
+                                    r.clone().on_hover_text(format!("Ridge {tag} is out"));
+                                }
+                            }
+                            if r.clicked() {
+                                self.tab = tab;
+                            }
+                        }
+                    });
                     // both pages show which personas run
                     if matches!(self.tab, Tab::Personas | Tab::Settings) && self.tab != before {
                         persona_view::refresh(self);
                     }
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        update_view::version_label(self, ui);
-                    });
                 });
                 // the hairline under the bar
                 let r = ui.max_rect();
@@ -268,6 +302,8 @@ impl eframe::App for RidgeApp {
             Tab::Graph => graph_view::show(self, ui),
             Tab::Annotate => annotate_view::show(self, ui),
             Tab::Shadows => sun_view::show(self, ui),
+            Tab::Versions => versions_view::show(self, ui),
+            Tab::Help => help_view::show(self, ui),
             Tab::Settings => settings_view::show(self, ui),
         });
         update_view::dialog(self, ui);
@@ -343,6 +379,62 @@ fn nav_button(ui: &mut egui::Ui, label: &str, active: bool) -> egui::Response {
         );
     }
     response
+}
+
+/// A page's title and the line under it, as the Cairn launcher's pages open.
+fn page_title(ui: &mut egui::Ui, title: &str, subtitle: &str) {
+    ui.add_space(26.0);
+    ui.label(
+        egui::RichText::new(title)
+            .size(32.0)
+            .strong()
+            .color(NAV_TEXT),
+    );
+    ui.add_space(2.0);
+    ui.label(egui::RichText::new(subtitle).size(15.0).color(NAV_MUTED));
+    ui.add_space(18.0);
+}
+
+/// A card of a page: rounded, outlined, roomy.
+fn card<R>(ui: &mut egui::Ui, body: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    egui::Frame::new()
+        .fill(egui::Color32::from_white_alpha(4))
+        .stroke(egui::Stroke::new(1.0, egui::Color32::from_white_alpha(26)))
+        .corner_radius(12)
+        .inner_margin(egui::Margin::symmetric(24, 20))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            body(ui)
+        })
+        .inner
+}
+
+/// SPACED CAPITALS, as the Cairn launcher writes its headings and labels.
+fn caps(text: &str, size: f32) -> egui::RichText {
+    egui::RichText::new(text.to_uppercase())
+        .size(size)
+        .extra_letter_spacing(size * 0.16)
+}
+
+/// The main button of a page: light, dark lettering in spaced capitals.
+fn primary_button(text: &str) -> egui::Button<'static> {
+    egui::Button::new(
+        caps(text, 14.0)
+            .strong()
+            .color(egui::Color32::from_rgb(0x12, 0x14, 0x16)),
+    )
+    .fill(egui::Color32::from_rgb(0xe8, 0xea, 0xed))
+    .corner_radius(8)
+    .min_size(egui::vec2(160.0, 40.0))
+}
+
+/// A second button beside it: outlined.
+fn secondary_button(text: &str) -> egui::Button<'static> {
+    egui::Button::new(caps(text, 14.0).strong().color(NAV_TEXT))
+        .fill(egui::Color32::TRANSPARENT)
+        .stroke(egui::Stroke::new(1.0, egui::Color32::from_white_alpha(60)))
+        .corner_radius(8)
+        .min_size(egui::vec2(120.0, 40.0))
 }
 
 /// Colours of the status badges, shared by both views.

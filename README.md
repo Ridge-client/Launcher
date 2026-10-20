@@ -43,7 +43,7 @@ Download the latest installer (`Ridge-Setup-X.Y.Z.exe`) from the [Releases](http
 
 The installer is not code-signed yet, so Windows may warn: click **More info**, then **Run anyway**.
 
-Ridge keeps itself up to date: an orange dot by its version, at the right of the top bar, means a newer one is out. Click the version to see what's new and **Update now**; Ridge closes, installs it and opens again.
+Ridge keeps itself up to date: an orange dot by **Versions**, at the right of the top bar, means a newer one is out. The Versions page lists what changed in each release; **Update to** installs the new one, and Ridge closes, installs it and opens again.
 
 ## Usage
 

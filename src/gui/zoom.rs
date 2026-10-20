@@ -89,30 +89,53 @@ impl Zoom {
         }
     }
 
-    /// −, the zoom and +, and Fit: buttons for a toolbar.
-    pub(super) fn buttons(&mut self, ui: &mut egui::Ui, area: Rect, size: [f32; 2]) {
-        if ui
-            .small_button("−")
-            .on_hover_text("Zoom out (Ctrl+scroll)")
-            .clicked()
-        {
-            self.zoom_at(1.0 / 1.5, area.center(), area, size);
+    /// −, the zoom and +, and Fit: buttons for a toolbar, left to right; in a right-to-left
+    /// layout (`right_to_left`), added the other way round so they still read left to right.
+    pub(super) fn buttons(
+        &mut self,
+        ui: &mut egui::Ui,
+        area: Rect,
+        size: [f32; 2],
+        right_to_left: bool,
+    ) {
+        let mut order = [0, 1, 2, 3];
+        if right_to_left {
+            order.reverse();
         }
-        ui.weak(format!("{:.0}%", self.zoom * 100.0))
-            .on_hover_text("Of the fitted size · Ctrl+scroll or pinch to zoom, scroll or drag with the middle button to move");
-        if ui
-            .small_button("+")
-            .on_hover_text("Zoom in (Ctrl+scroll)")
-            .clicked()
-        {
-            self.zoom_at(1.5, area.center(), area, size);
-        }
-        if ui
-            .add_enabled(!self.fitted(), egui::Button::new(icons::FIT).small())
-            .on_hover_text("Fit the whole picture")
-            .clicked()
-        {
-            *self = Self::default();
+        for button in order {
+            match button {
+                0 => {
+                    if ui
+                        .small_button("−")
+                        .on_hover_text("Zoom out (Ctrl+scroll)")
+                        .clicked()
+                    {
+                        self.zoom_at(1.0 / 1.5, area.center(), area, size);
+                    }
+                }
+                1 => {
+                    ui.weak(format!("{:.0}%", self.zoom * 100.0))
+                        .on_hover_text("Of the fitted size · Ctrl+scroll or pinch to zoom, scroll or drag with the middle button to move");
+                }
+                2 => {
+                    if ui
+                        .small_button("+")
+                        .on_hover_text("Zoom in (Ctrl+scroll)")
+                        .clicked()
+                    {
+                        self.zoom_at(1.5, area.center(), area, size);
+                    }
+                }
+                _ => {
+                    if ui
+                        .add_enabled(!self.fitted(), egui::Button::new(icons::FIT).small())
+                        .on_hover_text("Fit the whole picture")
+                        .clicked()
+                    {
+                        *self = Self::default();
+                    }
+                }
+            }
         }
     }
 }

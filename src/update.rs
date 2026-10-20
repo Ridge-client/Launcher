@@ -225,6 +225,70 @@ pub fn install(_setup: &std::path::Path) -> Result<(), String> {
     Err("Ridge installs its updates on Windows only".into())
 }
 
+/// A published release, for the changelog: its version, the day it came out (days since
+/// 1970), and its notes' bullets.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Release {
+    pub tag: String,
+    pub day: Option<i64>,
+    pub notes: Vec<String>,
+}
+
+/// The releases in the API's list, newest first; drafts and pre-releases left out.
+pub fn parse_releases(json: &str) -> Vec<Release> {
+    let Ok(Value::Array(list)) = serde_json::from_str::<Value>(json) else {
+        return Vec::new();
+    };
+    let mut releases: Vec<([u64; 4], Release)> = list
+        .iter()
+        .filter(|r| r["draft"].as_bool() != Some(true) && r["prerelease"].as_bool() != Some(true))
+        .filter_map(|r| {
+            let tag = r["tag_name"].as_str()?;
+            let v = version(tag)?;
+            let day = r["published_at"].as_str().and_then(|d| {
+                let mut parts = d.get(..10)?.split('-').map(|p| p.parse::<i64>().ok());
+                let (y, m, d) = (parts.next()??, parts.next()??, parts.next()??);
+                Some(crate::sun::days_from_civil(y, m as u32, d as u32))
+            });
+            let notes = r["body"]
+                .as_str()
+                .unwrap_or_default()
+                .lines()
+                .filter_map(|l| {
+                    let l = l.trim();
+                    l.strip_prefix("- ").or_else(|| l.strip_prefix("* "))
+                })
+                .map(|l| l.replace("**", "").replace('`', "").trim().to_string())
+                .filter(|l| !l.is_empty())
+                .collect();
+            Some((
+                v,
+                Release {
+                    tag: tag.to_string(),
+                    day,
+                    notes,
+                },
+            ))
+        })
+        .collect();
+    releases.sort_by_key(|r| std::cmp::Reverse(r.0));
+    releases.into_iter().map(|(_, r)| r).collect()
+}
+
+/// Every release, newest first, from GitHub's API.
+pub async fn releases() -> Result<Vec<Release>, String> {
+    let client = client(Duration::from_secs(10))?;
+    let list = text(
+        &client,
+        "https://api.github.com/repos/Ridge-client/Launcher/releases?per_page=50",
+    )
+    .await?;
+    Ok(parse_releases(&list))
+}
+
+/// The page listing every release.
+pub const RELEASES_PAGE: &str = "https://github.com/Ridge-client/Launcher/releases";
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -293,6 +357,22 @@ mod tests {
         .to_string();
         assert_eq!(newer(&no_digest, "0.1.1").unwrap().sha256, None);
         assert_eq!(newer("not json", "0.1.1"), None);
+    }
+
+    #[test]
+    fn releases_are_read_newest_first() {
+        let list = serde_json::json!([
+            {"tag_name": "0.1.2", "published_at": "2026-10-20T11:21:38Z", "body": "- Updates: a dot\n- Two\nnot a bullet"},
+            {"tag_name": "0.1.10", "published_at": "2026-11-02T08:00:00Z", "body": "* **Bold** item"},
+            {"tag_name": "0.2.0", "draft": true, "body": ""}
+        ])
+        .to_string();
+        let r = parse_releases(&list);
+        assert_eq!(r.len(), 2);
+        assert_eq!(r[0].tag, "0.1.10");
+        assert_eq!(r[0].notes, ["Bold item"]);
+        assert_eq!(r[1].notes, ["Updates: a dot", "Two"]);
+        assert_eq!(r[1].day, Some(crate::sun::days_from_civil(2026, 10, 20)));
     }
 
     #[test]

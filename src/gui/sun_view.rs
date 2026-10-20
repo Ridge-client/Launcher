@@ -6,27 +6,26 @@
 use std::path::{Path, PathBuf};
 
 use eframe::egui::{self, Color32, Pos2, Rect, Stroke, Vec2};
-use serde::{Deserialize, Serialize};
 
 use super::icons;
 use super::settings_view::section;
 use super::zoom::Zoom;
 use super::RidgeApp;
+use crate::photo::{Camera, Reading};
 use crate::sun::{self, Clues, SummerTime, Window, DAY};
 
-const STORAGE_KEY: &str = "shadows";
 const PICTURES: [&str; 5] = ["png", "jpg", "jpeg", "webp", "gif"];
 const MAX_TEXTURE: u32 = 4096;
 const ACCENT: Color32 = Color32::from_rgb(0xe8, 0xa3, 0x5a);
 const OBJECT: Color32 = Color32::from_rgb(0x00, 0xac, 0xc1);
 const ERROR: Color32 = Color32::from_rgb(218, 54, 51);
 const NORTH: Color32 = Color32::from_rgb(0xe5, 0x39, 0x35);
+const HORIZON: Color32 = Color32::from_rgb(0xb3, 0x9d, 0xdb);
 /// How wide the camera's view is drawn (a phone's main camera sees about 65–75°).
 const FIELD_OF_VIEW: f64 = 70.0;
 
-/// The clues, kept between sessions.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
+/// The clues typed in the panels (the tab starts blank each time Ridge opens).
+#[derive(Debug, Clone, PartialEq)]
 struct Saved {
     /// "43.3026, 5.3806" or a map link.
     place: String,
@@ -40,6 +39,8 @@ struct Saved {
     shadow: f64,
     azimuth_tolerance: f64,
     elevation_tolerance: f64,
+    /// How wide the photo sees, in degrees across its width.
+    lens: f64,
     /// Standard time's offset from UTC, in hours.
     utc_offset: f64,
     summer: SummerTime,
@@ -61,6 +62,7 @@ impl Default for Saved {
             shadow: 1.7,
             azimuth_tolerance: 5.0,
             elevation_tolerance: 2.0,
+            lens: 70.0,
             utc_offset: 1.0,
             summer: SummerTime::Europe,
             when: When::Unknown,
@@ -72,7 +74,7 @@ impl Default for Saved {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 enum When {
     /// Any date: one year searched stands for every year.
     #[default]
@@ -103,12 +105,18 @@ impl View {
 type Line = [[f32; 2]; 2];
 
 /// The lines drawn on the photo, their colours and how to draw them.
-const PHOTO_TOOLS: [(&str, Color32, &str); 2] = [
+const PHOTO_TOOLS: [(&str, Color32, &str); 3] = [
     ("Object", OBJECT, "Drag from the object's foot to its top"),
     (
         "Shadow",
         ACCENT,
         "Drag from the object's foot to the tip of its shadow",
+    ),
+    (
+        "Horizon",
+        HORIZON,
+        "Drag to the level where lines parallel to the ground meet (the far end of a street, \
+         rails or a platform). Until you draw it, the photo's middle is taken: a camera held level",
     ),
 ];
 
@@ -126,29 +134,16 @@ pub(super) struct State {
     zooms: [Zoom; 2],
     canvases: [Option<Rect>; 2],
     errors: [Option<String>; 2],
-    /// Lines drawn on the photo: the object (foot to top) and its shadow (foot to tip).
+    /// Lines drawn on the photo: the object (foot to top) and its shadow (foot to tip), and
+    /// the row of its horizon.
     lines: [Option<Line>; 2],
+    horizon: Option<f32>,
     /// The camera's view drawn on the map: from where it stood toward what it saw (north up).
     camera: Option<Line>,
     /// Which line a drag on the photo draws.
     tool: usize,
     /// A line being drawn: on which image, from where.
     drawing: Option<(View, [f32; 2])>,
-}
-
-impl State {
-    pub(super) fn load(storage: Option<&dyn eframe::Storage>) -> Self {
-        Self {
-            saved: storage
-                .and_then(|s| eframe::get_value(s, STORAGE_KEY))
-                .unwrap_or_default(),
-            ..Self::default()
-        }
-    }
-
-    pub(super) fn save(&self, storage: &mut dyn eframe::Storage) {
-        eframe::set_value(storage, STORAGE_KEY, &self.saved);
-    }
 }
 
 fn today() -> i64 {
@@ -243,11 +238,19 @@ fn map_heading(st: &State) -> Option<f64> {
     st.camera.map(|l| image_bearing(l).rem_euclid(360.0))
 }
 
-/// The object's and its shadow's lengths on the photo, in pixels, once both are drawn.
-fn photo_lengths(st: &State) -> Option<(f32, f32)> {
-    let length =
-        |l: &Option<Line>| l.map(|[a, b]| ((b[0] - a[0]).powi(2) + (b[1] - a[1]).powi(2)).sqrt());
-    Some((length(&st.lines[0])?, length(&st.lines[1])?))
+/// What the lines on the photo say, once its shadow is drawn: the shadow's direction and, with
+/// the object, the sun's elevation, through the photo's perspective.
+fn read_photo(st: &State) -> Option<Result<Reading, &'static str>> {
+    let shadow = st.lines[1]?;
+    let (.., size) = st.textures[View::Photo.index()].as_ref()?;
+    let camera = Camera {
+        width: size[0] as f64,
+        height: size[1] as f64,
+        fov: st.saved.lens,
+        horizon: st.horizon.unwrap_or(size[1] / 2.0) as f64,
+    };
+    let wide = |l: Line| l.map(|p| p.map(f64::from));
+    Some(camera.read(wide(shadow), st.lines[0].map(wide)))
 }
 
 /// The shadows' compass bearing.
@@ -288,31 +291,26 @@ pub(super) fn show(app: &mut RidgeApp, ui: &mut egui::Ui) {
         open_picture(st, if on_map { View::Map } else { View::Photo }, file);
     }
 
-    // the camera line on the map sets its bearing; the lines on the photo the lengths
+    // the camera line on the map sets its bearing; the lines on the photo where the shadows
+    // point from it and, with the object, the lengths (in camera heights)
     let heading = map_heading(st);
     if let Some(h) = heading {
         st.saved.heading = h;
     }
-    let lengths = photo_lengths(st);
-    if let Some((h, s)) = lengths {
-        st.saved.height = h as f64;
-        st.saved.shadow = s as f64;
+    let photo = read_photo(st).and_then(Result::ok);
+    if let Some(r) = photo {
+        st.saved.shadow_turn = r.turn;
+        if let Some(h) = r.height {
+            st.saved.height = h;
+            st.saved.shadow = r.length;
+        }
     }
+    let from_photo = FromPhoto {
+        direction: photo.is_some(),
+        lengths: photo.is_some_and(|r| r.height.is_some()),
+    };
 
-    egui::Panel::right("shadow_clues")
-        .resizable(false)
-        .exact_size(360.0)
-        .show(ui, |ui| {
-            egui::ScrollArea::vertical()
-                .id_salt("shadow_clues")
-                .auto_shrink(false)
-                .show(ui, |ui| {
-                    ui.add_space(8.0);
-                    clues_panel(&mut st.saved, heading.is_some(), lengths.is_some(), ui);
-                });
-        });
-
-    // find the candidates again when a clue changed
+    // find the candidates again when a clue changed (before the panel, whose chart shows them)
     let clues = clues(&st.saved);
     match &clues {
         Ok(c) if st.solved.as_ref().is_none_or(|(old, _)| old != c) => {
@@ -327,10 +325,30 @@ pub(super) fn show(app: &mut RidgeApp, ui: &mut egui::Ui) {
         _ => {}
     }
 
+    egui::Panel::right("shadow_clues")
+        .resizable(false)
+        .exact_size(360.0)
+        .show(ui, |ui| {
+            egui::ScrollArea::vertical()
+                .id_salt("shadow_clues")
+                .auto_shrink(false)
+                .show(ui, |ui| {
+                    ui.add_space(8.0);
+                    section(ui, "Sun's path", |ui| sky_chart(st, &clues, ui));
+                    ui.add_space(6.0);
+                    clues_panel(&mut st.saved, heading.is_some(), from_photo, ui);
+                });
+        });
+
     // the photo and the map side by side on top, always the same size; the place under them;
-    // then the sky and the candidates
+    // then the candidates
     ui.add_space(6.0);
-    let area = ui.available_rect_before_wrap();
+    let full = ui.available_rect_before_wrap();
+    // clear of the window's edge, the panel's border and the bottom
+    let area = Rect::from_min_max(
+        full.min + Vec2::new(6.0, 0.0),
+        full.max - Vec2::new(12.0, 10.0),
+    );
     let gap = 10.0;
     let top_h = (area.height() * 0.45).round();
     let half = (area.width() - gap) / 2.0;
@@ -348,21 +366,12 @@ pub(super) fn show(app: &mut RidgeApp, ui: &mut egui::Ui) {
     }
     let place = Rect::from_min_size(
         Pos2::new(area.min.x, area.min.y + top_h + gap),
-        Vec2::new(area.width(), 80.0),
+        Vec2::new(area.width(), 108.0),
     );
     ui.scope_builder(egui::UiBuilder::new().max_rect(place), |ui| {
         place_card(&mut st.saved, ui)
     });
-    let bottom = Rect::from_min_max(Pos2::new(area.min.x, place.bottom() + gap), area.max);
-    let side = bottom.height().min(bottom.width() * 0.35).min(340.0);
-    let chart_rect = Rect::from_min_size(bottom.min, Vec2::splat(side));
-    let list_rect = Rect::from_min_max(
-        Pos2::new(bottom.min.x + side + gap, bottom.min.y),
-        bottom.max,
-    );
-    ui.scope_builder(egui::UiBuilder::new().max_rect(chart_rect), |ui| {
-        sky_chart(st, &clues, ui)
-    });
+    let list_rect = Rect::from_min_max(Pos2::new(area.min.x, place.bottom() + gap), area.max);
     ui.scope_builder(egui::UiBuilder::new().max_rect(list_rect), |ui| {
         // a card of its own, the height of the space left
         egui::Frame::group(ui.style())
@@ -373,7 +382,11 @@ pub(super) fn show(app: &mut RidgeApp, ui: &mut egui::Ui) {
                 candidates(st, &clues, ui)
             });
     });
-    ui.allocate_rect(area, egui::Sense::hover());
+    ui.allocate_rect(full, egui::Sense::hover());
+    // a clue changed after the candidates were found: find them again on the next frame
+    if st.solved.as_ref().map(|(c, _)| c) != self::clues(&st.saved).ok().as_ref() {
+        ui.ctx().request_repaint();
+    }
 }
 
 /// Over each image: its name, open and close, the lines to draw, and the zoom.
@@ -431,6 +444,15 @@ fn pane_header(st: &mut State, view: View, ui: &mut egui::Ui) {
                         st.tool = t;
                     }
                 }
+                if (st.lines.iter().any(Option::is_some) || st.horizon.is_some())
+                    && ui
+                        .small_button(icons::CLEAN)
+                        .on_hover_text("Remove the lines drawn on the photo (then type the clues)")
+                        .clicked()
+                {
+                    st.lines = [None; 2];
+                    st.horizon = None;
+                }
             }
             View::Map => {
                 if st.camera.is_some()
@@ -443,10 +465,12 @@ fn pane_header(st: &mut State, view: View, ui: &mut egui::Ui) {
                 }
             }
         }
+        // the zoom at the header's right end, over the image's right edge
         if let (Some((.., size)), Some(canvas)) = (&st.textures[i], st.canvases[i]) {
             let size = *size;
-            ui.separator();
-            st.zooms[i].buttons(ui, canvas, size);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                st.zooms[i].buttons(ui, canvas, size, true);
+            });
         }
     });
     // what the lines say, or how to draw them
@@ -458,13 +482,28 @@ fn pane_header(st: &mut State, view: View, ui: &mut egui::Ui) {
         return;
     }
     let text = match view {
-        View::Photo => match photo_lengths(st) {
-            Some((h, s)) => format!("Object {h:.0} px, shadow {s:.0} px: these set the lengths"),
-            None if loaded => {
-                "Drag the object from its foot to its top, then its shadow from the foot to the tip"
-                    .into()
+        View::Photo => match read_photo(st) {
+            Some(Ok(r)) => {
+                let sun = r
+                    .elevation
+                    .map_or(" · draw the object for the sun's height".into(), |e| {
+                        format!(" · sun {e:.1}° high")
+                    });
+                format!(
+                    "Shadows point {:+.0}° ({}){sun}{}",
+                    r.turn,
+                    turn_words(r.turn),
+                    if st.horizon.is_none() { " · horizon taken in the middle" } else { "" }
+                )
             }
-            None => "Optional: to measure an object and its shadow".into(),
+            Some(Err(e)) => {
+                ui.add(egui::Label::new(egui::RichText::new(e).color(ERROR)).truncate());
+                return;
+            }
+            None if loaded => {
+                "Drag the shadow from the object's foot to its tip, the object from its foot to its top, and the horizon".into()
+            }
+            None => "The photo: an object, its shadow and the horizon".into(),
         },
         View::Map => match map_heading(st) {
             Some(h) => format!("Camera faces {h:.0}° ({})", sun::compass(h)),
@@ -499,7 +538,10 @@ fn close_picture(st: &mut State, view: View) {
     let i = view.index();
     st.pictures[i] = None;
     match view {
-        View::Photo => st.lines = [None; 2],
+        View::Photo => {
+            st.lines = [None; 2];
+            st.horizon = None;
+        }
         View::Map => st.camera = None,
     }
     st.zooms[i] = Zoom::default();
@@ -523,9 +565,9 @@ fn choose_picture(st: &mut State, view: View) {
 
 // ---- the clues ----
 
-/// Where the picture was taken and the local clock there, in one row under the images.
+/// Where and when to look, and how sure the clues are, in two rows under the images.
 fn place_card(s: &mut Saved, ui: &mut egui::Ui) {
-    section(ui, "Place", |ui| {
+    section(ui, "Place and date", |ui| {
         ui.horizontal(|ui| {
             ui.add(
                 egui::TextEdit::singleline(&mut s.place)
@@ -580,59 +622,73 @@ fn place_card(s: &mut Saved, ui: &mut egui::Ui) {
                     }
                 });
         });
-    });
-}
-
-/// `heading_on_map`, `lengths_on_photo`: those clues come from lines drawn on the images.
-fn clues_panel(s: &mut Saved, heading_on_map: bool, lengths_on_photo: bool, ui: &mut egui::Ui) {
-    section(ui, "Dates to search", |ui| {
-        ui.horizontal_wrapped(|ui| {
-            ui.radio_value(&mut s.when, When::Unknown, "Unknown");
+        ui.add_space(2.0);
+        ui.horizontal(|ui| {
+            ui.label("Dates");
+            ui.radio_value(&mut s.when, When::Unknown, "Unknown")
+                .on_hover_text("Any date: they come without a year, good to a day or so");
             ui.radio_value(&mut s.when, When::Year, "A year");
             ui.radio_value(&mut s.when, When::Between, "Between");
             ui.radio_value(&mut s.when, When::Day, "One day");
+            let date = |ui: &mut egui::Ui, text: &mut String| {
+                let ok = sun::parse_date(text).is_some();
+                let mut edit = egui::TextEdit::singleline(text)
+                    .desired_width(100.0)
+                    .hint_text("2026-04-15");
+                if !ok {
+                    edit = edit.text_color(ERROR);
+                }
+                ui.add(edit)
+                    .on_hover_text("2026-04-15 or 15/04/2026");
+            };
+            match s.when {
+                When::Unknown => {}
+                When::Year => {
+                    ui.add(
+                        egui::DragValue::new(&mut s.year)
+                            .range(1800..=2200)
+                            .speed(0.1),
+                    );
+                }
+                When::Between => {
+                    date(ui, &mut s.from);
+                    ui.label("to");
+                    date(ui, &mut s.to);
+                }
+                When::Day => date(ui, &mut s.day),
+            }
+            if let Err(e) = days(s) {
+                ui.colored_label(ERROR, e);
+            }
+            ui.separator();
+            ui.label("How sure: direction ±")
+                .on_hover_text("Each degree of the sun's direction is about 4 minutes of the day. Widen these if nothing fits");
+            ui.add(
+                egui::DragValue::new(&mut s.azimuth_tolerance)
+                    .range(0.5..=45.0)
+                    .speed(0.1)
+                    .suffix("°"),
+            );
+            ui.label("elevation ±");
+            ui.add(
+                egui::DragValue::new(&mut s.elevation_tolerance)
+                    .range(0.2..=30.0)
+                    .speed(0.1)
+                    .suffix("°"),
+            );
         });
-        let date = |ui: &mut egui::Ui, text: &mut String| {
-            let ok = sun::parse_date(text).is_some();
-            let mut edit = egui::TextEdit::singleline(text)
-                .desired_width(100.0)
-                .hint_text("2026-04-15");
-            if !ok {
-                edit = edit.text_color(ERROR);
-            }
-            ui.add(edit);
-        };
-        match s.when {
-            // a wrapped line: in a row it would widen the whole panel
-            When::Unknown => {
-                ui.weak("Any date: they come without a year, good to a day or so.");
-            }
-            _ => {
-                ui.horizontal(|ui| match s.when {
-                    When::Year => {
-                        ui.add(
-                            egui::DragValue::new(&mut s.year)
-                                .range(1800..=2200)
-                                .speed(0.1),
-                        );
-                    }
-                    When::Between => {
-                        date(ui, &mut s.from);
-                        ui.label("to");
-                        date(ui, &mut s.to);
-                    }
-                    When::Day => date(ui, &mut s.day),
-                    When::Unknown => {}
-                });
-            }
-        }
-        if let Err(e) = days(s) {
-            ui.colored_label(ERROR, e);
-        }
-        ui.weak("Leaves, clothes, the metadata or the post date often narrow it down.");
     });
-    ui.add_space(6.0);
+}
 
+/// Which clues the lines on the photo give.
+#[derive(Clone, Copy)]
+struct FromPhoto {
+    direction: bool,
+    lengths: bool,
+}
+
+/// `heading_on_map`, `photo`: those clues come from lines drawn on the images.
+fn clues_panel(s: &mut Saved, heading_on_map: bool, photo: FromPhoto, ui: &mut egui::Ui) {
     section(ui, "Shadow direction", |ui| {
         egui::Grid::new("shadow_direction")
             .num_columns(2)
@@ -652,32 +708,55 @@ fn clues_panel(s: &mut Saved, heading_on_map: bool, lengths_on_photo: bool, ui: 
                 ui.end_row();
                 ui.label("Shadows point");
                 ui.horizontal(|ui| {
-                    degrees(ui, &mut s.shadow_turn, -180.0..=180.0).on_hover_text(
-                        "Seen from the camera: 0° straight ahead, 90° right, -90° left, ±180° toward the camera",
-                    );
+                    ui.add_enabled_ui(!photo.direction, |ui| {
+                        degrees(ui, &mut s.shadow_turn, -180.0..=180.0).on_hover_text(
+                            "Seen from the camera: 0° straight ahead, 90° right, -90° left, ±180° toward the camera",
+                        )
+                    })
+                    .response
+                    .on_disabled_hover_text("Set by the shadow line on the photo");
                     ui.weak(turn_words(s.shadow_turn));
                 });
                 ui.end_row();
                 ui.label("So, on a map");
                 ui.horizontal(|ui| {
                     let mut bearing = shadow_bearing(s);
-                    if degrees(ui, &mut bearing, 0.0..=359.9)
-                        .on_hover_text("The shadows' compass bearing, if you measured it on a map")
-                        .changed()
-                    {
+                    let changed = ui
+                        .add_enabled_ui(!photo.direction, |ui| {
+                            degrees(ui, &mut bearing, 0.0..=359.9)
+                                .on_hover_text(
+                                    "The shadows' compass bearing, if you measured it on a map",
+                                )
+                                .changed()
+                        })
+                        .inner;
+                    if changed {
                         s.shadow_turn = sun::angle_diff(s.heading, bearing);
                     }
                     ui.weak(sun::compass(bearing));
                 });
                 ui.end_row();
+                ui.label("Photo's view");
+                ui.add(
+                    egui::DragValue::new(&mut s.lens)
+                        .range(20.0..=130.0)
+                        .speed(0.2)
+                        .max_decimals(0)
+                        .suffix("°"),
+                )
+                .on_hover_text(
+                    "How wide the photo sees across its width: a phone's main camera ≈ 65–75°, its 0.5× ultra-wide ≈ 110°, its 2× ≈ 40°. Uncropped photos only",
+                );
+                ui.end_row();
             });
         ui.add_space(4.0);
-        ui.weak(if heading_on_map {
-            "The camera comes from its line on the map: clear it there to type."
-        } else {
-            "Or draw the camera's view on a map, beside the photo."
+        ui.weak(match (heading_on_map, photo.direction) {
+            (true, true) => "From the camera line on the map and the shadow on the photo: clear them there to type.",
+            (true, false) => "The camera comes from its line on the map; draw a shadow on the photo for where the shadows point.",
+            (false, true) => "The shadows come from the photo; draw the camera's view on the map for its bearing.",
+            (false, false) => "Or draw the camera's view on the map and a shadow on the photo.",
         });
-        ui.vertical_centered(|ui| dial(s, ui));
+        ui.vertical_centered(|ui| dial(s, photo.direction, ui));
         let sun_bearing = (shadow_bearing(s) + 180.0).rem_euclid(360.0);
         ui.weak(format!(
             "The sun was at {sun_bearing:.0}° ({}), behind the objects.",
@@ -693,7 +772,7 @@ fn clues_panel(s: &mut Saved, heading_on_map: bool, lengths_on_photo: bool, ui: 
             .show(ui, |ui| {
                 ui.label("Object height");
                 ui.add_enabled(
-                    !lengths_on_photo,
+                    !photo.lengths,
                     egui::DragValue::new(&mut s.height)
                         .range(0.01..=10_000.0)
                         .speed(0.01)
@@ -702,18 +781,18 @@ fn clues_panel(s: &mut Saved, heading_on_map: bool, lengths_on_photo: bool, ui: 
                 .on_hover_text(
                     "A person ≈ 1.7 m, a door ≈ 2 m, a storey ≈ 3 m, a lamp post ≈ 4–10 m",
                 )
-                .on_disabled_hover_text("Set by the lines on the photo, in pixels");
+                .on_disabled_hover_text("Set by the lines on the photo, in camera heights");
                 ui.end_row();
                 ui.label("Its shadow");
                 ui.add_enabled(
-                    !lengths_on_photo,
+                    !photo.lengths,
                     egui::DragValue::new(&mut s.shadow)
                         .range(0.01..=100_000.0)
                         .speed(0.01)
                         .max_decimals(2),
                 )
                 .on_hover_text("From the object's foot to the tip of its shadow, in the same unit")
-                .on_disabled_hover_text("Set by the lines on the photo, in pixels");
+                .on_disabled_hover_text("Set by the lines on the photo, in camera heights");
                 ui.end_row();
             });
         let elevation = sun::elevation_from_shadow(s.height, s.shadow);
@@ -721,39 +800,13 @@ fn clues_panel(s: &mut Saved, heading_on_map: bool, lengths_on_photo: bool, ui: 
             "Sun {elevation:.1}° above the horizon (shadow {:.2}× the height)",
             s.shadow / s.height
         ));
-        ui.weak(if lengths_on_photo {
-            "From the lines on the photo: only fair for a shadow falling sideways across it. Close the photo to type the lengths."
+        ui.weak(if photo.lengths {
+            "From the object and its shadow on the photo, put back on the ground through its perspective (in heights of the camera). Clear them there to type."
         } else {
             "On level ground, in the same unit. Paving, tiles and markings help measure a shadow that runs toward the camera."
         });
     });
     ui.add_space(6.0);
-
-    section(ui, "How sure", |ui| {
-        egui::Grid::new("tolerance")
-            .num_columns(2)
-            .spacing([8.0, 4.0])
-            .show(ui, |ui| {
-                ui.label("Direction ±");
-                ui.add(
-                    egui::DragValue::new(&mut s.azimuth_tolerance)
-                        .range(0.5..=45.0)
-                        .speed(0.1)
-                        .suffix("°"),
-                );
-                ui.end_row();
-                ui.label("Elevation ±");
-                ui.add(
-                    egui::DragValue::new(&mut s.elevation_tolerance)
-                        .range(0.2..=30.0)
-                        .speed(0.1)
-                        .suffix("°"),
-                );
-                ui.end_row();
-            });
-        ui.weak("Each degree of the sun's direction is about 4 minutes of the day. Widen these if nothing fits.");
-    });
-    ui.add_space(8.0);
 }
 
 /// A bearing in degrees.
@@ -798,13 +851,17 @@ fn dir(turn: f64) -> Vec2 {
 
 /// The camera seen from above, looking up: drag around it to point the shadows. The compass
 /// letters turn with the camera.
-fn dial(s: &mut Saved, ui: &mut egui::Ui) {
+fn dial(s: &mut Saved, locked: bool, ui: &mut egui::Ui) {
     let size = 190.0;
     let (rect, response) = ui.allocate_exact_size(Vec2::splat(size), egui::Sense::click_and_drag());
-    let response = response.on_hover_cursor(egui::CursorIcon::Crosshair);
+    let response = if locked {
+        response
+    } else {
+        response.on_hover_cursor(egui::CursorIcon::Crosshair)
+    };
     let c = rect.center();
     let r = size / 2.0 - 16.0;
-    if let Some(p) = response.interact_pointer_pos() {
+    if let Some(p) = response.interact_pointer_pos().filter(|_| !locked) {
         if response.dragged() || response.clicked() {
             let v = p - c;
             if v.length() > 4.0 {
@@ -880,8 +937,11 @@ fn dial(s: &mut Saved, ui: &mut egui::Ui) {
             Stroke::new(1.5, Color32::from_rgb(0xfd, 0xd8, 0x35)),
         );
     }
-    response
-        .on_hover_text("Drag around the camera to point the shadows as they fall in the picture");
+    response.on_hover_text(if locked {
+        "Set by the shadow line on the photo"
+    } else {
+        "Drag around the camera to point the shadows as they fall in the picture"
+    });
 }
 
 // ---- the photo and the map ----
@@ -916,6 +976,38 @@ fn texture(st: &mut State, view: View, ctx: &egui::Context) -> Option<(egui::Tex
         st.textures[i] = Some((path, handle, size));
     }
     st.textures[i].as_ref().map(|(_, t, size)| (t.id(), *size))
+}
+
+/// The map's north, up: a round badge with an N and a red point toward north, as map apps have.
+fn compass_badge(painter: &egui::Painter, ui: &egui::Ui, area: Rect) {
+    let c = Pos2::new(area.left() + 26.0, area.top() + 28.0);
+    let r = 15.0;
+    painter.circle(
+        c,
+        r,
+        Color32::from_black_alpha(185),
+        Stroke::new(1.0, Color32::from_white_alpha(45)),
+    );
+    // the point on the rim, toward north
+    painter.add(egui::Shape::convex_polygon(
+        vec![
+            c + Vec2::new(0.0, -r - 6.0),
+            c + Vec2::new(-5.0, -r + 1.5),
+            c + Vec2::new(5.0, -r + 1.5),
+        ],
+        NORTH,
+        Stroke::NONE,
+    ));
+    painter.text(
+        c + Vec2::new(0.0, 1.0),
+        egui::Align2::CENTER_CENTER,
+        "N",
+        egui::FontId::proportional(14.0),
+        Color32::WHITE,
+    );
+    let badge = Rect::from_center_size(c, Vec2::splat(2.0 * r + 8.0));
+    ui.interact(badge, ui.scope_id().with("map_north"), egui::Sense::hover())
+        .on_hover_text("North is up: use a map or satellite view with north at the top");
 }
 
 /// An arrow from `a` to `b`, outlined so it shows on any image.
@@ -995,7 +1087,10 @@ fn canvas(st: &mut State, view: View, ui: &mut egui::Ui) {
     }
     if let (Some((on, start)), Some(p)) = (st.drawing, pointer) {
         let end = to_picture(p);
-        if on == view && (to_screen(end) - to_screen(start)).length() > 6.0 {
+        if on == view && view == View::Photo && st.tool == 2 {
+            // the horizon follows the pointer's height
+            st.horizon = Some(end[1]);
+        } else if on == view && (to_screen(end) - to_screen(start)).length() > 6.0 {
             let line = Some([start, end]);
             match view {
                 View::Photo => st.lines[st.tool] = line,
@@ -1008,6 +1103,25 @@ fn canvas(st: &mut State, view: View, ui: &mut egui::Ui) {
     }
 
     if view == View::Photo {
+        // the horizon across the photo: drawn, or its middle until it is
+        let y = to_screen([0.0, st.horizon.unwrap_or(size[1] / 2.0)]).y;
+        let (colour, text) = match st.horizon {
+            Some(_) => (HORIZON, "Horizon"),
+            None => (Color32::from_white_alpha(90), "Horizon (middle)"),
+        };
+        painter.add(egui::Shape::dashed_line(
+            &[Pos2::new(shown.left(), y), Pos2::new(shown.right(), y)],
+            Stroke::new(1.5, colour),
+            8.0,
+            6.0,
+        ));
+        painter.text(
+            Pos2::new(shown.left().max(area.left()) + 6.0, y - 3.0),
+            egui::Align2::LEFT_BOTTOM,
+            text,
+            egui::FontId::proportional(12.0),
+            colour,
+        );
         for (line, colour) in st.lines.iter().zip([OBJECT, ACCENT]) {
             let Some([a, b]) = line else {
                 continue;
@@ -1021,7 +1135,6 @@ fn canvas(st: &mut State, view: View, ui: &mut egui::Ui) {
         return;
     }
 
-    // north is always up
     let label = |at: Pos2, text: &str, colour: Color32| {
         let galley =
             painter.layout_no_wrap(text.to_string(), egui::FontId::proportional(13.0), colour);
@@ -1029,9 +1142,6 @@ fn canvas(st: &mut State, view: View, ui: &mut egui::Ui) {
         painter.rect_filled(r, 3.0, Color32::from_black_alpha(170));
         painter.galley(r.min + Vec2::new(4.0, 2.0), galley, colour);
     };
-    let base = area.left_top() + Vec2::new(24.0, 52.0);
-    arrow(&painter, base, base - Vec2::new(0.0, 32.0), NORTH);
-    label(base - Vec2::new(0.0, 44.0), "N", NORTH);
     // the camera: where it stood and what it saw
     if let Some([a, b]) = st.camera {
         let (a, b) = (to_screen(a), to_screen(b));
@@ -1057,6 +1167,8 @@ fn canvas(st: &mut State, view: View, ui: &mut egui::Ui) {
             );
         }
     }
+    // north is always up: a compass badge in the corner, over everything
+    compass_badge(&painter, ui, area);
 }
 
 // ---- the sky ----
@@ -1064,9 +1176,8 @@ fn canvas(st: &mut State, view: View, ui: &mut egui::Ui) {
 /// The sky seen from below, north up: the middle is overhead, the rim the horizon. The sun's
 /// path on the chosen day, where the clues put it, and the camera's view.
 fn sky_chart(st: &mut State, clues: &Result<Clues, &'static str>, ui: &mut egui::Ui) {
-    let rect = ui.available_rect_before_wrap();
-    let side = rect.width().min(rect.height());
-    let rect = Rect::from_center_size(rect.center(), Vec2::splat(side));
+    let side = ui.available_width();
+    let (rect, _) = ui.allocate_exact_size(Vec2::splat(side), egui::Sense::hover());
     let painter = ui.painter_at(rect.expand(2.0));
     let visuals = ui.visuals();
     let c = rect.center();
@@ -1429,17 +1540,6 @@ mod tests {
                 "{dx},{dy}"
             );
         }
-    }
-
-    #[test]
-    fn the_photo_gives_the_lengths_once_both_lines_are_drawn() {
-        let mut st = State {
-            lines: [Some([[10.0, 200.0], [10.0, 50.0]]), None],
-            ..State::default()
-        };
-        assert_eq!(photo_lengths(&st), None);
-        st.lines[1] = Some([[10.0, 200.0], [130.0, 290.0]]);
-        assert_eq!(photo_lengths(&st), Some((150.0, 150.0)));
     }
 
     #[test]
