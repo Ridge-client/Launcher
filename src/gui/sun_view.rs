@@ -327,12 +327,12 @@ pub(super) fn show(app: &mut RidgeApp, ui: &mut egui::Ui) {
         _ => {}
     }
 
-    // the photo and the map side by side on top, always the same size; the sky and the
-    // candidates under them
+    // the photo and the map side by side on top, always the same size; the place under them;
+    // then the sky and the candidates
     ui.add_space(6.0);
     let area = ui.available_rect_before_wrap();
-    let top_h = (area.height() * 0.5).round();
     let gap = 10.0;
+    let top_h = (area.height() * 0.45).round();
     let half = (area.width() - gap) / 2.0;
     for (i, view) in View::BOTH.into_iter().enumerate() {
         let left = area.min.x + i as f32 * (half + gap);
@@ -346,18 +346,32 @@ pub(super) fn show(app: &mut RidgeApp, ui: &mut egui::Ui) {
             canvas(st, view, ui)
         });
     }
-    let bottom = Rect::from_min_max(Pos2::new(area.min.x, area.min.y + top_h + 8.0), area.max);
-    let side = bottom.height().min(bottom.width() * 0.5).min(520.0);
-    let chart_rect = Rect::from_min_size(bottom.min, Vec2::splat(side)).shrink(6.0);
+    let place = Rect::from_min_size(
+        Pos2::new(area.min.x, area.min.y + top_h + gap),
+        Vec2::new(area.width(), 80.0),
+    );
+    ui.scope_builder(egui::UiBuilder::new().max_rect(place), |ui| {
+        place_card(&mut st.saved, ui)
+    });
+    let bottom = Rect::from_min_max(Pos2::new(area.min.x, place.bottom() + gap), area.max);
+    let side = bottom.height().min(bottom.width() * 0.35).min(340.0);
+    let chart_rect = Rect::from_min_size(bottom.min, Vec2::splat(side));
     let list_rect = Rect::from_min_max(
-        Pos2::new(bottom.min.x + side + 8.0, bottom.min.y),
+        Pos2::new(bottom.min.x + side + gap, bottom.min.y),
         bottom.max,
     );
     ui.scope_builder(egui::UiBuilder::new().max_rect(chart_rect), |ui| {
         sky_chart(st, &clues, ui)
     });
     ui.scope_builder(egui::UiBuilder::new().max_rect(list_rect), |ui| {
-        candidates(st, &clues, ui)
+        // a card of its own, the height of the space left
+        egui::Frame::group(ui.style())
+            .fill(ui.visuals().faint_bg_color)
+            .inner_margin(egui::Margin::symmetric(14, 10))
+            .show(ui, |ui| {
+                ui.set_min_size(ui.available_size());
+                candidates(st, &clues, ui)
+            });
     });
     ui.allocate_rect(area, egui::Sense::hover());
 }
@@ -509,17 +523,18 @@ fn choose_picture(st: &mut State, view: View) {
 
 // ---- the clues ----
 
-/// `heading_on_map`, `lengths_on_photo`: those clues come from lines drawn on the images.
-fn clues_panel(s: &mut Saved, heading_on_map: bool, lengths_on_photo: bool, ui: &mut egui::Ui) {
+/// Where the picture was taken and the local clock there, in one row under the images.
+fn place_card(s: &mut Saved, ui: &mut egui::Ui) {
     section(ui, "Place", |ui| {
-        ui.add(
-            egui::TextEdit::singleline(&mut s.place)
-                .desired_width(f32::INFINITY)
-                .hint_text("43.3026, 5.3806 or a map link"),
-        );
-        match parse_place(&s.place) {
-            Some((lat, lon)) => {
-                ui.horizontal(|ui| {
+        ui.horizontal(|ui| {
+            ui.add(
+                egui::TextEdit::singleline(&mut s.place)
+                    .desired_width(300.0)
+                    .hint_text("43.3026, 5.3806 or a map link"),
+            )
+            .on_hover_text("Latitude and longitude, as Google Maps or OpenStreetMap gives them");
+            match parse_place(&s.place) {
+                Some((lat, lon)) => {
                     ui.weak(format!(
                         "{:.5}° {}, {:.5}° {}",
                         lat.abs(),
@@ -536,17 +551,15 @@ fn clues_panel(s: &mut Saved, heading_on_map: bool, lengths_on_photo: bool, ui: 
                             "https://www.openstreetmap.org/?mlat={lat}&mlon={lon}#map=18/{lat}/{lon}"
                         ));
                     }
-                });
+                }
+                None if s.place.trim().is_empty() => {
+                    ui.weak("Latitude and longitude");
+                }
+                None => {
+                    ui.colored_label(ERROR, "Not a latitude and longitude");
+                }
             }
-            None if s.place.trim().is_empty() => {
-                ui.weak("Latitude and longitude, as Google Maps or OpenStreetMap gives them.");
-            }
-            None => {
-                ui.colored_label(ERROR, "Not a latitude and longitude");
-            }
-        }
-        ui.add_space(4.0);
-        ui.horizontal(|ui| {
+            ui.separator();
             ui.label("Clock: UTC");
             ui.add(
                 egui::DragValue::new(&mut s.utc_offset)
@@ -558,18 +571,20 @@ fn clues_panel(s: &mut Saved, heading_on_map: bool, lengths_on_photo: bool, ui: 
             .on_hover_text(
                 "Standard (winter) time there: +1 for France, 0 for the UK, -5 for New York",
             );
+            egui::ComboBox::from_id_salt("summer_time")
+                .width(ui.available_width().clamp(120.0, 300.0))
+                .selected_text(s.summer.label())
+                .show_ui(ui, |ui| {
+                    for rule in SummerTime::ALL {
+                        ui.selectable_value(&mut s.summer, rule, rule.label());
+                    }
+                });
         });
-        egui::ComboBox::from_id_salt("summer_time")
-            .width(ui.available_width())
-            .selected_text(s.summer.label())
-            .show_ui(ui, |ui| {
-                for rule in SummerTime::ALL {
-                    ui.selectable_value(&mut s.summer, rule, rule.label());
-                }
-            });
     });
-    ui.add_space(6.0);
+}
 
+/// `heading_on_map`, `lengths_on_photo`: those clues come from lines drawn on the images.
+fn clues_panel(s: &mut Saved, heading_on_map: bool, lengths_on_photo: bool, ui: &mut egui::Ui) {
     section(ui, "Dates to search", |ui| {
         ui.horizontal_wrapped(|ui| {
             ui.radio_value(&mut s.when, When::Unknown, "Unknown");
@@ -1279,8 +1294,7 @@ fn candidates(st: &mut State, clues: &Result<Clues, &'static str>, ui: &mut egui
     let clues = match clues {
         Ok(c) => c,
         Err(e) => {
-            ui.add_space(8.0);
-            ui.heading("Candidates");
+            ui.label(egui::RichText::new("Candidates").strong().size(16.0));
             ui.weak(*e);
             return;
         }
@@ -1288,7 +1302,7 @@ fn candidates(st: &mut State, clues: &Result<Clues, &'static str>, ui: &mut egui
     let windows = st.solved.as_ref().map_or(&[][..], |(_, w)| &w[..]);
     let any_year = st.saved.when == When::Unknown;
     ui.horizontal(|ui| {
-        ui.heading("Candidates");
+        ui.label(egui::RichText::new("Candidates").strong().size(16.0));
         ui.weak(windows.len().to_string());
         if !windows.is_empty() {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
