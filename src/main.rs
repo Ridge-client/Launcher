@@ -12,6 +12,7 @@ mod gui;
 mod persona;
 mod photo;
 mod sun;
+mod tracks;
 mod ui;
 mod update;
 

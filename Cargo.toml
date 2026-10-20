@@ -38,6 +38,10 @@ serde_json = "1"
 sha2 = "0.10"
 tar = "0.4"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "net", "io-util"] }
+# GPX and KML track files, for the Map tab
+roxmltree = "0.21"
+# KMZ track files: a zipped KML
+zip = { version = "2", default-features = false, features = ["deflate"] }
 
 # the built-in browser of the "Create persona" screen (WebView2)
 [target.'cfg(windows)'.dependencies]

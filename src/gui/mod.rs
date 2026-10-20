@@ -9,6 +9,7 @@ mod catalog_view;
 mod graph_view;
 mod help_view;
 mod icons;
+mod map_view;
 mod persona_view;
 mod settings_view;
 mod sun_view;
@@ -59,6 +60,12 @@ enum Msg {
     UpdateDownloaded(Result<PathBuf, String>),
     /// Every release, for the Versions page's changelog.
     Releases(Result<Vec<crate::update::Release>, String>),
+    /// A Map tab basemap tile, from OpenStreetMap or its disk cache; `None` when it couldn't be
+    /// fetched or decoded.
+    TileLoaded {
+        key: map_view::TileKey,
+        image: Option<egui::ColorImage>,
+    },
 }
 
 #[derive(Debug, Clone, Default)]
@@ -82,6 +89,7 @@ enum Tab {
     Graph,
     Annotate,
     Shadows,
+    Map,
     Versions,
     Help,
     Settings,
@@ -125,6 +133,7 @@ struct RidgeApp {
     graph: graph_view::State,
     annotate: annotate_view::State,
     shadows: sun_view::State,
+    map: map_view::State,
     settings: settings_view::State,
     update: update_view::State,
     versions: versions_view::State,
@@ -157,6 +166,7 @@ impl RidgeApp {
             graph: graph_view::State::load(cc.storage),
             annotate: annotate_view::State::default(),
             shadows: sun_view::State::default(),
+            map: map_view::State::default(),
             settings: settings_view::State::default(),
             update: update_view::State::default(),
             versions: versions_view::State::default(),
@@ -219,6 +229,7 @@ impl RidgeApp {
                 Msg::UpdateProgress(p) => update_view::progress(self, p),
                 Msg::UpdateDownloaded(result) => update_view::downloaded(self, result),
                 Msg::Releases(result) => self.versions.loaded(result),
+                Msg::TileLoaded { key, image } => map_view::tile_loaded(self, key, image),
             }
         }
     }
@@ -251,6 +262,7 @@ impl eframe::App for RidgeApp {
                         (Tab::Graph, "Graph"),
                         (Tab::Annotate, "Annotate"),
                         (Tab::Shadows, "Shadows"),
+                        (Tab::Map, "Map"),
                     ] {
                         if nav_button(ui, label, self.tab == tab).clicked() {
                             self.tab = tab;
@@ -302,6 +314,7 @@ impl eframe::App for RidgeApp {
             Tab::Graph => graph_view::show(self, ui),
             Tab::Annotate => annotate_view::show(self, ui),
             Tab::Shadows => sun_view::show(self, ui),
+            Tab::Map => map_view::show(self, ui),
             Tab::Versions => versions_view::show(self, ui),
             Tab::Help => help_view::show(self, ui),
             Tab::Settings => settings_view::show(self, ui),

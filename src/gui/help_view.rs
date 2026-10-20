@@ -7,7 +7,7 @@ use super::{caps, card, page_title, primary_button, RidgeApp, NAV_MUTED, NAV_TEX
 const ISSUES: &str = "https://github.com/Ridge-client/Launcher/issues/new";
 
 /// Each tab: its name and how it works, a line at a time.
-const TABS: [(&str, &[&str]); 7] = [
+const TABS: [(&str, &[&str]); 8] = [
     (
         "OSINT tools",
         &[
@@ -43,6 +43,13 @@ const TABS: [(&str, &[&str]); 7] = [
             "Photo: the shadow from an object's foot to its tip, the object from its foot to its top, and the horizon (where lines parallel to the ground meet). Set Photo's view to the lens: 70° for a phone's main camera.",
             "Map: a map or satellite view with north up; drag from where the camera stood toward what it saw.",
             "The candidates list every date and time the sun stood like that; two per year are normal (either side of the June solstice): pick with the season in the picture. Copy puts them in a report.",
+        ],
+    ),
+    (
+        "Map",
+        &[
+            "Add files… (or drop one on the map) opens a track: NMEA 0183 (GPS fixes and AIS position reports), GPX, KML/KMZ, or an ADS-B SBS log — a plane, a boat or a car's path.",
+            "Each file gets its own colour; the checkbox hides it, Fit centres the map on it, and the basemap tiles are cached so revisiting a place doesn't ask OpenStreetMap again.",
         ],
     ),
     (
