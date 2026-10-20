@@ -63,7 +63,7 @@ const TABS: [(&str, &[&str]); 10] = [
     (
         "Overpass",
         &[
-            "Asks OpenStreetMap's Overpass API for places and shows them on the map: write a query on the left (or pick one under Examples) and Run.",
+            "Asks OpenStreetMap's Overpass API for places and shows them on the map: write a query on the left and Run.",
             "{{bbox}} in a query stands for the part of the map in view and {{center}} for its middle. Click a result or a marker to see its tags; Export saves them as GeoJSON.",
         ],
     ),

@@ -10,45 +10,9 @@ use super::map_view::{self, Viewport};
 use super::{Msg, RidgeApp, NAV_ACCENT, NAV_MUTED};
 use crate::overpass::{self, Feature};
 
-/// Queries to start from; `{{bbox}}` is the part of the map in view.
-const EXAMPLES: [(&str, &str); 9] = [
-    (
-        "Police stations",
-        "[out:json][timeout:60];\nnwr[\"amenity\"=\"police\"]({{bbox}});\nout center tags;",
-    ),
-    (
-        "Military areas",
-        "[out:json][timeout:60];\n(\n  nwr[\"landuse\"=\"military\"]({{bbox}});\n  nwr[\"military\"]({{bbox}});\n);\nout geom;",
-    ),
-    (
-        "Radio and cell masts",
-        "[out:json][timeout:60];\n(\n  nwr[\"man_made\"=\"mast\"]({{bbox}});\n  nwr[\"man_made\"=\"tower\"][\"tower:type\"=\"communication\"]({{bbox}});\n);\nout center tags;",
-    ),
-    (
-        "Surveillance cameras",
-        "[out:json][timeout:60];\nnode[\"man_made\"=\"surveillance\"]({{bbox}});\nout tags;",
-    ),
-    (
-        "Airports and helipads",
-        "[out:json][timeout:60];\n(\n  nwr[\"aeroway\"=\"aerodrome\"]({{bbox}});\n  nwr[\"aeroway\"=\"helipad\"]({{bbox}});\n);\nout center tags;",
-    ),
-    (
-        "Ports and ferry terminals",
-        "[out:json][timeout:60];\n(\n  nwr[\"landuse\"=\"harbour\"]({{bbox}});\n  nwr[\"amenity\"=\"ferry_terminal\"]({{bbox}});\n);\nout center tags;",
-    ),
-    (
-        "Embassies",
-        "[out:json][timeout:60];\n(\n  nwr[\"amenity\"=\"embassy\"]({{bbox}});\n  nwr[\"office\"=\"diplomatic\"]({{bbox}});\n);\nout center tags;",
-    ),
-    (
-        "Hospitals",
-        "[out:json][timeout:60];\nnwr[\"amenity\"=\"hospital\"]({{bbox}});\nout center tags;",
-    ),
-    (
-        "Search by name",
-        "[out:json][timeout:60];\nnwr[\"name\"~\"hotel\",i]({{bbox}});\nout center tags;",
-    ),
-];
+/// The query the tab starts with; `{{bbox}}` is the part of the map in view.
+const STARTER: &str =
+    "[out:json][timeout:60];\nnwr[\"amenity\"=\"police\"]({{bbox}});\nout center tags;";
 
 pub(super) struct State {
     query: String,
@@ -69,7 +33,7 @@ pub(super) struct State {
 impl Default for State {
     fn default() -> Self {
         Self {
-            query: EXAMPLES[0].1.into(),
+            query: STARTER.into(),
             view: None,
             features: Vec::new(),
             selected: None,
@@ -89,14 +53,9 @@ pub(super) fn loaded(app: &mut RidgeApp, result: Result<Vec<Feature>, String>) {
     st.selected = None;
     match result {
         Ok(features) => {
-            st.status = Some((
-                match features.len() {
-                    0 => "Nothing found here".into(),
-                    1 => "1 result".into(),
-                    n => format!("{n} results"),
-                },
-                false,
-            ));
+            st.status = features
+                .is_empty()
+                .then(|| ("Nothing found here".to_string(), false));
             st.fit = !features.is_empty();
             st.features = features;
         }
@@ -174,14 +133,6 @@ pub(super) fn show(app: &mut RidgeApp, ui: &mut egui::Ui) {
             )
             .on_hover_text("Run the query over the map in view (Ctrl+Enter)");
         run_now |= run.clicked();
-        ui.menu_button("Examples", |ui| {
-            for (name, query) in EXAMPLES {
-                if ui.button(name).clicked() {
-                    st.query = query.into();
-                    ui.close();
-                }
-            }
-        });
         if ui
             .add_enabled(
                 !st.features.is_empty(),
@@ -257,12 +208,9 @@ fn side(st: &mut State, ui: &mut egui::Ui) {
     ui.add_space(8.0);
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new("Results").strong());
-        if !st.features.is_empty() {
-            ui.weak(st.features.len().to_string());
-        }
     });
     if st.features.is_empty() {
-        ui.weak("Pick an example, move the map to the place and Run. {{bbox}} stands for the map in view.");
+        ui.weak("Move the map to the place and Run. {{bbox}} stands for the map in view.");
         return;
     }
     let row_h = ui.spacing().interact_size.y;

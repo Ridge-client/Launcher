@@ -106,13 +106,13 @@ impl Layer {
         }
     }
 
-    /// The colour of the layer's card in the selector, a stand-in for a thumbnail.
-    fn swatch(self) -> Color32 {
+    /// A fixed picture of the layer, for its card in the selector.
+    fn preview(self) -> &'static [u8] {
         match self {
-            Layer::Dark => Color32::from_rgb(0x2b, 0x2f, 0x36),
-            Layer::Streets => Color32::from_rgb(0xe9, 0xe4, 0xd8),
-            Layer::Satellite => Color32::from_rgb(0x3b, 0x5a, 0x3a),
-            Layer::Terrain => Color32::from_rgb(0xc9, 0xb8, 0x8c),
+            Layer::Dark => include_bytes!("../../assets/layers/dark.png"),
+            Layer::Streets => include_bytes!("../../assets/layers/streets.png"),
+            Layer::Satellite => include_bytes!("../../assets/layers/satellite.png"),
+            Layer::Terrain => include_bytes!("../../assets/layers/terrain.png"),
         }
     }
 }
@@ -207,6 +207,8 @@ pub(super) struct State {
     tiles: HashMap<TileKey, TileState>,
     layer: Layer,
     layers_open: bool,
+    /// The layer cards' pictures, decoded the first time the selector is drawn.
+    previews: HashMap<Layer, egui::TextureHandle>,
     files: Vec<LoadedFile>,
     error: Option<String>,
     canvas: Option<Rect>,
@@ -233,6 +235,7 @@ impl Default for State {
             tiles: HashMap::new(),
             layer: Layer::default(),
             layers_open: false,
+            previews: HashMap::new(),
             files: Vec::new(),
             error: None,
             canvas: None,
@@ -873,9 +876,9 @@ impl Projection {
 }
 
 /// The layer selector at the canvas's bottom-left corner, as Google Maps has it: a card with
-/// the current layer that opens into one card per basemap, each showing the map as that layer
-/// draws it right here.
-fn layer_selector(app: &mut RidgeApp, ui: &egui::Ui, area: Rect, view: &Viewport) {
+/// the current layer that opens into one card per basemap, each with a fixed picture of how that
+/// layer looks.
+fn layer_selector(app: &mut RidgeApp, ui: &egui::Ui, area: Rect) {
     egui::Area::new(egui::Id::unique("map_layers"))
         .order(egui::Order::Foreground)
         .fixed_pos(area.left_bottom() + Vec2::new(10.0, -10.0))
@@ -893,20 +896,20 @@ fn layer_selector(app: &mut RidgeApp, ui: &egui::Ui, area: Rect, view: &Viewport
                     for layer in cards {
                         let (rect, r) =
                             ui.allocate_exact_size(Vec2::new(84.0, 66.0), egui::Sense::click());
-                        // a piece of the map under the view's centre, from a wider level
-                        let (key, uv) = sample(layer, view);
-                        ensure_tile(app, key);
-                        match app.map.tiles.get(&key) {
-                            Some(TileState::Ready(tex)) => {
-                                egui::Image::new((tex.id(), rect.size()))
-                                    .uv(uv)
-                                    .corner_radius(6.0)
-                                    .paint_at(ui, rect);
-                            }
-                            _ => {
-                                ui.painter().rect_filled(rect, 6.0, layer.swatch());
-                            }
-                        }
+                        let preview = app.map.previews.entry(layer).or_insert_with(|| {
+                            let img = image::load_from_memory(layer.preview())
+                                .map(|i| i.to_rgba8())
+                                .unwrap_or_else(|_| image::RgbaImage::new(1, 1));
+                            let size = [img.width() as usize, img.height() as usize];
+                            ui.ctx().load_texture(
+                                format!("layer-{}", layer.provider()),
+                                egui::ColorImage::from_rgba_unmultiplied(size, img.as_raw()),
+                                egui::TextureOptions::LINEAR,
+                            )
+                        });
+                        egui::Image::new((preview.id(), rect.size()))
+                            .corner_radius(6.0)
+                            .paint_at(ui, rect);
                         let painter = ui.painter();
                         let label_bg = Rect::from_min_max(
                             Pos2::new(rect.left(), rect.bottom() - 20.0),
@@ -954,28 +957,6 @@ fn layer_selector(app: &mut RidgeApp, ui: &egui::Ui, area: Rect, view: &Viewport
                 });
             });
         });
-}
-
-/// The tile and the part of it (as a texture window) that show `layer` around the view's centre,
-/// three levels out so a card holds a neighbourhood rather than a few streets.
-fn sample(layer: Layer, view: &Viewport) -> (TileKey, Rect) {
-    let z = (view.zoom.round() as i32 - 3).clamp(2, layer.max_zoom() as i32);
-    let (wx, wy) = (
-        lon_to_x(view.center.1, z as f64) / TILE_SIZE,
-        lat_to_y(view.center.0, z as f64) / TILE_SIZE,
-    );
-    let across = 1i64 << z;
-    let (tx, ty) = (wx.floor(), wy.floor());
-    let key = TileKey {
-        layer,
-        z: z as u8,
-        x: (tx as i64).rem_euclid(across) as u32,
-        y: (ty as i64).clamp(0, across - 1) as u32,
-    };
-    let (w, h) = (0.4f32, 0.32f32);
-    let u = (((wx - tx) as f32) - w / 2.0).clamp(0.0, 1.0 - w);
-    let v = (((wy - ty) as f32) - h / 2.0).clamp(0.0, 1.0 - h);
-    (key, Rect::from_min_size(Pos2::new(u, v), Vec2::new(w, h)))
 }
 
 /// Draws the basemap in `area` as `view` looks at it, with its layer selector and attribution,
@@ -1061,7 +1042,7 @@ pub(super) fn basemap(
         egui::FontId::proportional(11.0),
         Color32::from_white_alpha(if layer == Layer::Streets { 140 } else { 110 }),
     );
-    layer_selector(app, ui, area, view);
+    layer_selector(app, ui, area);
 
     if response.dragged() {
         let d = response.drag_delta();
