@@ -12,6 +12,8 @@ use std::collections::BTreeMap;
 use super::{Fix, Track};
 use crate::sun::{days_from_civil, DAY};
 
+const KNOTS_TO_MPS: f64 = 0.514_444;
+
 pub(super) fn parse(text: &str) -> Result<Vec<Track>, String> {
     let mut gps = Track {
         name: "GPS".into(),
@@ -78,7 +80,14 @@ fn parse_gga(fields: &[&str], date: Option<(i64, u32, u32)>) -> Option<Fix> {
         .and_then(|t| time_of_day(t))
         .zip(date)
         .map(|(secs, (y, m, d))| days_from_civil(y, m, d) * DAY + secs);
-    Some(Fix { lat, lon, time })
+    let alt = fields.get(9).and_then(|a| a.parse().ok());
+    Some(Fix {
+        lat,
+        lon,
+        time,
+        alt,
+        speed: None,
+    })
 }
 
 /// $--RMC,time,status,lat,N/S,lon,E/W,speed,track,date,magvar,E/W[,mode]
@@ -90,7 +99,20 @@ fn parse_rmc(fields: &[&str]) -> Option<(Fix, (i64, u32, u32))> {
         .get(1)
         .and_then(|t| time_of_day(t))
         .map(|secs| days_from_civil(date.0, date.1, date.2) * DAY + secs);
-    Some((Fix { lat, lon, time }, date))
+    let speed = fields
+        .get(7)
+        .and_then(|s| s.parse::<f64>().ok())
+        .map(|knots| knots * KNOTS_TO_MPS);
+    Some((
+        Fix {
+            lat,
+            lon,
+            time,
+            alt: None,
+            speed,
+        },
+        date,
+    ))
 }
 
 /// "4807.038" (ddmm.mmmm) or "01131.000" (dddmm.mmmm), whichever width the degrees are: dividing
@@ -171,12 +193,13 @@ fn signed(value: u64, width: u32) -> i64 {
 }
 
 /// A position report's MMSI and fix: message types 1–3 (Class A) and 18–19 (Class B), the only
-/// ones carrying a latitude and longitude.
+/// ones carrying a latitude and longitude. Speed over ground sits a little before the position
+/// in both layouts (ITU-R M.1371): 10 bits, tenths of a knot, 1023 meaning "not available".
 fn decode_position(payload: &[u32]) -> Option<(u32, Fix)> {
     let msg_type = bits(payload, 0, 6);
-    let lon_start = match msg_type {
-        1..=3 => 61,
-        18 | 19 => 57,
+    let (sog_start, lon_start) = match msg_type {
+        1..=3 => (50, 61),
+        18 | 19 => (46, 57),
         _ => return None,
     };
     if payload.len() * 6 < lon_start + 28 + 27 {
@@ -188,12 +211,16 @@ fn decode_position(payload: &[u32]) -> Option<(u32, Fix)> {
     if !(-90.0..=90.0).contains(&lat) || !(-180.0..=180.0).contains(&lon) {
         return None;
     }
+    let sog = bits(payload, sog_start, 10);
+    let speed = (sog != 1023).then_some(sog as f64 * 0.1 * KNOTS_TO_MPS);
     Some((
         mmsi,
         Fix {
             lat,
             lon,
             time: None,
+            alt: None,
+            speed,
         },
     ))
 }
@@ -216,6 +243,9 @@ mod tests {
         assert_eq!(rmc.time, Some(764_426_119));
         // GGA borrows RMC's date, one second later
         assert_eq!(gps.points[1].time, Some(764_426_120));
+        // RMC's speed (22.4 knots) and GGA's altitude (545.4 m)
+        assert!((rmc.speed.unwrap() - 22.4 * KNOTS_TO_MPS).abs() < 1e-6);
+        assert_eq!(gps.points[1].alt, Some(545.4));
     }
 
     #[test]

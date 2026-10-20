@@ -100,10 +100,13 @@ fn tuple(tuple: &str) -> Option<Fix> {
     let mut parts = tuple.split(',');
     let lon: f64 = parts.next()?.parse().ok()?;
     let lat: f64 = parts.next()?.parse().ok()?;
+    let alt = parts.next().and_then(|a| a.parse().ok());
     Some(Fix {
         lat,
         lon,
         time: None,
+        alt,
+        speed: None,
     })
 }
 
@@ -119,13 +122,16 @@ fn gx_track_points(node: Node) -> Vec<Fix> {
             let mut parts = t.split_whitespace();
             let lon: f64 = parts.next()?.parse().ok()?;
             let lat: f64 = parts.next()?.parse().ok()?;
-            Some((lat, lon))
+            let alt = parts.next().and_then(|a| a.parse().ok());
+            Some((lat, lon, alt))
         })
         .enumerate()
-        .map(|(i, (lat, lon))| Fix {
+        .map(|(i, (lat, lon, alt))| Fix {
             lat,
             lon,
             time: whens.get(i).copied(),
+            alt,
+            speed: None,
         })
         .collect()
 }
@@ -156,7 +162,7 @@ mod tests {
     <Placemark>
       <name>Flight</name>
       <LineString>
-        <coordinates>2.55,49.01,0 -73.78,40.64,0</coordinates>
+        <coordinates>2.55,49.01,120 -73.78,40.64,0</coordinates>
       </LineString>
     </Placemark>
   </Document>
@@ -167,6 +173,7 @@ mod tests {
         assert_eq!(tracks[0].points.len(), 2);
         assert_eq!(tracks[0].points[0].lon, 2.55);
         assert_eq!(tracks[0].points[0].lat, 49.01);
+        assert_eq!(tracks[0].points[0].alt, Some(120.0));
     }
 
     #[test]

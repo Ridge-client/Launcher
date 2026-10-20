@@ -7,6 +7,9 @@ use std::collections::BTreeMap;
 use super::{Fix, Track};
 use crate::sun::days_from_civil;
 
+const FEET_TO_METRES: f64 = 0.3048;
+const KNOTS_TO_MPS: f64 = 0.514_444;
+
 pub(super) fn parse(text: &str) -> Result<Vec<Track>, String> {
     let mut planes: BTreeMap<String, Vec<Fix>> = BTreeMap::new();
     for line in text.lines() {
@@ -28,7 +31,8 @@ pub(super) fn parse(text: &str) -> Result<Vec<Track>, String> {
 }
 
 /// Field numbers follow the published BaseStation layout, 1-based: 2 transmission type, 5 ICAO
-/// hex, 7/8 the date and time the message was generated, 15 latitude, 16 longitude.
+/// hex, 7/8 the date and time the message was generated, 12 altitude (feet), 13 ground speed
+/// (knots), 15 latitude, 16 longitude.
 fn parse_line(line: &str) -> Option<Fix> {
     let fields: Vec<&str> = line.trim_end().split(',').collect();
     if fields.first() != Some(&"MSG") || fields.get(1) != Some(&"3") {
@@ -40,7 +44,21 @@ fn parse_line(line: &str) -> Option<Fix> {
         .get(6)
         .zip(fields.get(7))
         .and_then(|(d, t)| parse_date_time(d, t));
-    Some(Fix { lat, lon, time })
+    let alt = fields
+        .get(11)
+        .and_then(|a| a.parse::<f64>().ok())
+        .map(|ft| ft * FEET_TO_METRES);
+    let speed = fields
+        .get(12)
+        .and_then(|s| s.parse::<f64>().ok())
+        .map(|knots| knots * KNOTS_TO_MPS);
+    Some(Fix {
+        lat,
+        lon,
+        time,
+        alt,
+        speed,
+    })
 }
 
 /// "2017/01/01" and "00:00:00.000".
@@ -63,7 +81,7 @@ mod tests {
     #[test]
     fn reads_an_airborne_position_and_skips_other_messages() {
         let text = "MSG,1,1,1,4CA2C6,1,2017/01/01,00:00:00.000,2017/01/01,00:00:00.000,RYR42NG,,,,,,,,,,,0\n\
-                     MSG,3,1,1,4CA2C6,1,2017/01/01,00:00:01.000,2017/01/01,00:00:01.000,,38000,,,51.47000,-0.45000,,,,,,0\n";
+                     MSG,3,1,1,4CA2C6,1,2017/01/01,00:00:01.000,2017/01/01,00:00:01.000,,38000,450,,51.47000,-0.45000,,,,,,0\n";
         let tracks = parse(text).unwrap();
         assert_eq!(tracks.len(), 1);
         assert_eq!(tracks[0].name, "Plane 4CA2C6");
@@ -71,6 +89,8 @@ mod tests {
         assert_eq!(tracks[0].points[0].lat, 51.47);
         assert_eq!(tracks[0].points[0].lon, -0.45);
         assert!(tracks[0].points[0].time.is_some());
+        assert!((tracks[0].points[0].alt.unwrap() - 38000.0 * FEET_TO_METRES).abs() < 1e-6);
+        assert!((tracks[0].points[0].speed.unwrap() - 450.0 * KNOTS_TO_MPS).abs() < 1e-6);
     }
 
     #[test]

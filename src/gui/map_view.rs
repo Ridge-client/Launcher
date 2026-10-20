@@ -17,7 +17,6 @@ use std::time::Duration;
 
 use eframe::egui::{self, Color32, Pos2, Rect, Stroke, Vec2};
 
-use super::settings_view::section;
 use super::{icons, Msg, RidgeApp, NAV_MUTED, NAV_TEXT};
 use crate::tracks::{self, Track};
 
@@ -60,7 +59,10 @@ struct LoadedFile {
     name: String,
     tracks: Vec<Track>,
     color: Color32,
-    visible: bool,
+    /// Shown on the map, and shown in the timeline below it: set independently, since a file
+    /// can be worth seeing on one without cluttering the other.
+    on_map: bool,
+    in_timeline: bool,
 }
 
 impl LoadedFile {
@@ -82,6 +84,44 @@ impl LoadedFile {
     }
 }
 
+/// The timeline's two series: each fix's altitude and speed, drawn in their own colour since
+/// they share one chart but not one scale.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Metric {
+    Altitude,
+    Speed,
+}
+
+const ALTITUDE_COLOR: Color32 = Color32::from_rgb(0x42, 0x85, 0xf4);
+const SPEED_COLOR: Color32 = Color32::from_rgb(0xe8, 0xa3, 0x5a);
+/// How long a full playthrough of a track takes, whatever the track's own duration.
+const PLAYBACK_SECONDS: f64 = 24.0;
+
+impl Metric {
+    fn color(self) -> Color32 {
+        match self {
+            Metric::Altitude => ALTITUDE_COLOR,
+            Metric::Speed => SPEED_COLOR,
+        }
+    }
+
+    fn unit(self) -> &'static str {
+        match self {
+            Metric::Altitude => "m",
+            Metric::Speed => "km/h",
+        }
+    }
+
+    /// A fix's value in this metric's own unit (speed is kept in m/s on `Fix`; shown in km/h,
+    /// the unit more people judge a speed by at a glance than m/s or knots).
+    fn of(self, fix: &crate::tracks::Fix) -> Option<f64> {
+        match self {
+            Metric::Altitude => fix.alt,
+            Metric::Speed => fix.speed.map(|s| s * 3.6),
+        }
+    }
+}
+
 pub(super) struct State {
     /// Where the map is centred, and how far in (fractional: a pinch or a scroll notch moves it
     /// smoothly, but tiles only exist at whole levels, so the nearest one is scaled to fit).
@@ -92,6 +132,12 @@ pub(super) struct State {
     error: Option<String>,
     canvas: Option<Rect>,
     client: reqwest::Client,
+    /// The timeline's moment, scrubbed to, dragged to or played to: the map then marks each
+    /// track's fix closest to it instead of its last one.
+    cursor_time: Option<i64>,
+    playing: bool,
+    /// How many seconds of the track pass per real second while playing.
+    play_rate: f64,
 }
 
 impl Default for State {
@@ -110,6 +156,9 @@ impl Default for State {
             error: None,
             canvas: None,
             client,
+            cursor_time: None,
+            playing: false,
+            play_rate: 1.0,
         }
     }
 }
@@ -169,86 +218,369 @@ pub(super) fn show(app: &mut RidgeApp, ui: &mut egui::Ui) {
                 });
         });
 
+    egui::Panel::bottom("map_timeline")
+        .resizable(false)
+        .exact_size(190.0)
+        .show(ui, |ui| timeline(app, ui));
+
     canvas(app, ui);
 }
 
 fn sidebar(app: &mut RidgeApp, ui: &mut egui::Ui) {
+    ui.add_space(10.0);
+    ui.label(
+        egui::RichText::new("Track files")
+            .strong()
+            .size(16.0)
+            .color(NAV_TEXT),
+    );
     ui.add_space(8.0);
-    section(ui, "Track files", |ui| {
+    if ui
+        .button(icons::with(icons::FOLDER_OPEN, "Add files…"))
+        .on_hover_text("NMEA, GPX, KML/KMZ or an ADS-B SBS log (or drop one on the map)")
+        .clicked()
+    {
+        if let Some(paths) = rfd::FileDialog::new()
+            .set_title("Choose track files")
+            .add_filter("Track files", &EXTENSIONS)
+            .add_filter("All files", &["*"])
+            .pick_files()
+        {
+            for path in paths {
+                add_file(app, path);
+            }
+        }
+    }
+    if let Some(err) = app.map.error.clone() {
+        ui.add_space(6.0);
+        ui.colored_label(Color32::from_rgb(218, 54, 51), err);
+    }
+    if app.map.files.is_empty() {
+        ui.add_space(8.0);
+        ui.weak("Nothing opened yet.");
+        return;
+    }
+
+    let mut remove = None;
+    let mut fit = None;
+    ui.add_space(10.0);
+    ui.separator();
+    for (i, file) in app.map.files.iter_mut().enumerate() {
+        ui.add_space(10.0);
+        ui.horizontal(|ui| {
+            let (rect, _) = ui.allocate_exact_size(Vec2::splat(12.0), egui::Sense::hover());
+            ui.painter().rect_filled(rect, 3.0, file.color);
+            ui.label(egui::RichText::new(&file.name).color(NAV_TEXT))
+                .on_hover_text(file.path.display().to_string());
+        });
+        ui.label(
+            egui::RichText::new(format!(
+                "{} track{}, {} points",
+                file.tracks.len(),
+                if file.tracks.len() == 1 { "" } else { "s" },
+                file.points()
+            ))
+            .size(12.0)
+            .color(NAV_MUTED),
+        );
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            let small = |label: &str| egui::RichText::new(label).size(12.0).color(NAV_MUTED);
+            ui.add(egui::Checkbox::new(&mut file.on_map, small("Map")))
+                .on_hover_text("Show this file's tracks on the map");
+            ui.add(egui::Checkbox::new(
+                &mut file.in_timeline,
+                small("Timeline"),
+            ))
+            .on_hover_text("Show this file's tracks in the timeline below");
+        });
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            if ui.small_button(icons::with(icons::FIT, "Fit")).clicked() {
+                fit = Some(i);
+            }
+            if ui
+                .small_button(icons::CANCEL)
+                .on_hover_text("Remove")
+                .clicked()
+            {
+                remove = Some(i);
+            }
+        });
+        ui.add_space(6.0);
+        ui.separator();
+    }
+    if let Some(i) = fit {
+        if let Some(bounds) = app.map.files[i].bounds() {
+            fit_bounds(app, bounds);
+        }
+    }
+    if let Some(i) = remove {
+        app.map.files.remove(i);
+    }
+}
+
+/// Below the map: Altitude/Speed over time for every visible track that has it, and the
+/// moment scrubbed to, which marks each track's nearest fix on the map above instead of its
+/// last one.
+fn timeline(app: &mut RidgeApp, ui: &mut egui::Ui) {
+    egui::Frame::new()
+        .inner_margin(egui::Margin::symmetric(16, 8))
+        .show(ui, |ui| {
+            let bounds = chart(app, ui);
+            ui.add_space(6.0);
+            player(app, ui, bounds);
+        });
+}
+
+/// A track's fixes, smoothed (a short moving average) so GPS jitter between close-together
+/// points doesn't turn the line into noise too dense to read.
+fn smoothed(points: &[(i64, f64)]) -> Vec<(i64, f64)> {
+    const WINDOW: usize = 9;
+    if points.len() <= WINDOW {
+        return points.to_vec();
+    }
+    let half = WINDOW / 2;
+    (0..points.len())
+        .map(|i| {
+            let lo = i.saturating_sub(half);
+            let hi = (i + half + 1).min(points.len());
+            let avg = points[lo..hi].iter().map(|p| p.1).sum::<f64>() / (hi - lo) as f64;
+            (points[i].0, avg)
+        })
+        .collect()
+}
+
+/// The timeline's chart: altitude and speed over time, on their own vertical scale each but one
+/// shared time axis; returns that time axis (`None` with nothing to plot).
+fn chart(app: &mut RidgeApp, ui: &mut egui::Ui) -> Option<(i64, i64)> {
+    let size = Vec2::new(ui.available_width(), ui.available_height() - 34.0);
+    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click_and_drag());
+    let painter = ui.painter_at(rect);
+    painter.rect_filled(rect, 4.0, Color32::from_black_alpha(70));
+
+    let mut per_metric = [Vec::new(), Vec::new()]; // [altitude, speed] tracks' points
+    let (mut tmin, mut tmax) = (i64::MAX, i64::MIN);
+    let mut ranges = [(f64::MAX, f64::MIN), (f64::MAX, f64::MIN)];
+    for file in app.map.files.iter().filter(|f| f.in_timeline) {
+        for track in &file.tracks {
+            for (m, metric) in [Metric::Altitude, Metric::Speed].into_iter().enumerate() {
+                let points: Vec<(i64, f64)> = track
+                    .points
+                    .iter()
+                    .filter_map(|f| Some((f.time?, metric.of(f)?)))
+                    .collect();
+                if points.len() < 2 {
+                    continue;
+                }
+                for &(t, v) in &points {
+                    tmin = tmin.min(t);
+                    tmax = tmax.max(t);
+                    ranges[m].0 = ranges[m].0.min(v);
+                    ranges[m].1 = ranges[m].1.max(v);
+                }
+                per_metric[m].push(smoothed(&points));
+            }
+        }
+    }
+    if tmin >= tmax {
+        painter.text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            "No altitude or speed data in these files",
+            egui::FontId::proportional(13.0),
+            NAV_MUTED,
+        );
+        return None;
+    }
+    for range in &mut ranges {
+        if range.1 <= range.0 {
+            range.1 = range.0 + 1.0;
+        }
+    }
+
+    // room for the value labels above/below the line, so a peak or a trough is never clipped
+    let plot = rect.shrink2(Vec2::new(4.0, 16.0));
+    let x_of = |t: i64| plot.left() + (t - tmin) as f32 / (tmax - tmin) as f32 * plot.width();
+    let y_of = |v: f64, (lo, hi): (f64, f64)| {
+        plot.bottom() - ((v - lo) / (hi - lo)) as f32 * plot.height()
+    };
+
+    let small = egui::FontId::proportional(10.0);
+    for (m, metric) in [Metric::Altitude, Metric::Speed].into_iter().enumerate() {
+        if per_metric[m].is_empty() {
+            continue;
+        }
+        for points in &per_metric[m] {
+            let line: Vec<Pos2> = points
+                .iter()
+                .map(|&(t, v)| Pos2::new(x_of(t), y_of(v, ranges[m])))
+                .collect();
+            painter.add(egui::Shape::line(line, Stroke::new(1.6, metric.color())));
+        }
+        // altitude's labels on the left, speed's on the right, each by its own line's colour
+        let (align, x) = if m == 0 {
+            (egui::Align2::LEFT_BOTTOM, plot.left())
+        } else {
+            (egui::Align2::RIGHT_BOTTOM, plot.right())
+        };
+        painter.text(
+            Pos2::new(x, plot.top() - 2.0),
+            align,
+            format!("{:.0} {}", ranges[m].1, metric.unit()),
+            small.clone(),
+            metric.color(),
+        );
+        let align = if m == 0 {
+            egui::Align2::LEFT_TOP
+        } else {
+            egui::Align2::RIGHT_TOP
+        };
+        painter.text(
+            Pos2::new(x, plot.bottom() + 2.0),
+            align,
+            format!("{:.0} {}", ranges[m].0, metric.unit()),
+            small.clone(),
+            metric.color(),
+        );
+    }
+
+    // scrubbing: dragging or clicking moves the cursor and pauses any playback
+    if let Some(p) = response.interact_pointer_pos() {
+        let frac = ((p.x - plot.left()) / plot.width()).clamp(0.0, 1.0);
+        app.map.cursor_time = Some(tmin + (frac * (tmax - tmin) as f32) as i64);
+        app.map.playing = false;
+    }
+    if let Some(t) = app.map.cursor_time.filter(|t| (tmin..=tmax).contains(t)) {
+        let x = x_of(t);
+        painter.line_segment(
+            [Pos2::new(x, plot.top()), Pos2::new(x, plot.bottom())],
+            Stroke::new(1.5, Color32::from_white_alpha(180)),
+        );
+    }
+    // hovering alone (no button down) still shows what moment is under the pointer
+    if let Some(p) = response.hover_pos() {
+        let frac = ((p.x - plot.left()) / plot.width()).clamp(0.0, 1.0);
+        let t = tmin + (frac * (tmax - tmin) as f32) as i64;
+        painter.line_segment(
+            [Pos2::new(p.x, plot.top()), Pos2::new(p.x, plot.bottom())],
+            Stroke::new(1.0, Color32::from_white_alpha(70)),
+        );
+        painter.text(
+            Pos2::new(
+                p.x.clamp(plot.left() + 36.0, plot.right() - 36.0),
+                plot.top() - 2.0,
+            ),
+            egui::Align2::CENTER_BOTTOM,
+            format!("{} UTC", crate::sun::format_clock(t)),
+            small,
+            NAV_TEXT,
+        );
+    }
+
+    Some((tmin, tmax))
+}
+
+/// How fast playback can run: a button cycles through these, in order.
+const PLAY_RATES: [f64; 5] = [0.25, 0.5, 1.0, 2.0, 4.0];
+
+fn next_play_rate(rate: f64) -> f64 {
+    let i = PLAY_RATES
+        .iter()
+        .position(|r| (r - rate).abs() < 1e-9)
+        .unwrap_or(2);
+    PLAY_RATES[(i + 1) % PLAY_RATES.len()]
+}
+
+/// Jump to the start or end, play/pause, and the speed it plays at: always shown, even with
+/// nothing loaded yet, so the controls don't jump around the panel once a file is.
+fn player(app: &mut RidgeApp, ui: &mut egui::Ui, bounds: Option<(i64, i64)>) {
+    if let (true, Some((tmin, tmax))) = (app.map.playing, bounds) {
+        let rate = (tmax - tmin) as f64 / PLAYBACK_SECONDS * app.map.play_rate;
+        let dt = ui.input(|i| i.stable_dt) as f64;
+        let next = app.map.cursor_time.unwrap_or(tmin) + (dt * rate) as i64;
+        if next >= tmax {
+            app.map.cursor_time = Some(tmax);
+            app.map.playing = false;
+        } else {
+            app.map.cursor_time = Some(next);
+        }
+        ui.ctx().request_repaint();
+    }
+
+    let enabled = bounds.is_some();
+    let (tmin, tmax) = bounds.unwrap_or_default();
+    ui.horizontal(|ui| {
         if ui
-            .button(icons::with(icons::FOLDER_OPEN, "Add files…"))
-            .on_hover_text("NMEA, GPX, KML/KMZ or an ADS-B SBS log (or drop one on the map)")
+            .add_enabled(enabled, egui::Button::new(icons::PREVIOUS).small())
+            .on_hover_text("Jump to the start")
             .clicked()
         {
-            if let Some(paths) = rfd::FileDialog::new()
-                .set_title("Choose track files")
-                .add_filter("Track files", &EXTENSIONS)
-                .add_filter("All files", &["*"])
-                .pick_files()
-            {
-                for path in paths {
-                    add_file(app, path);
-                }
+            app.map.cursor_time = Some(tmin);
+            app.map.playing = false;
+        }
+        let icon = if app.map.playing {
+            icons::STOP
+        } else {
+            icons::START
+        };
+        if ui
+            .add_enabled(enabled, egui::Button::new(icon).small())
+            .on_hover_text(if app.map.playing { "Pause" } else { "Play" })
+            .clicked()
+        {
+            if !app.map.playing && app.map.cursor_time.is_none_or(|t| t >= tmax) {
+                app.map.cursor_time = Some(tmin);
             }
+            app.map.playing = !app.map.playing;
         }
-        if let Some(err) = app.map.error.clone() {
-            ui.add_space(6.0);
-            ui.colored_label(Color32::from_rgb(218, 54, 51), err);
+        if ui
+            .add_enabled(enabled, egui::Button::new(icons::NEXT).small())
+            .on_hover_text("Jump to the end")
+            .clicked()
+        {
+            app.map.cursor_time = Some(tmax);
+            app.map.playing = false;
         }
-        if app.map.files.is_empty() {
-            ui.add_space(4.0);
-            ui.weak("Nothing opened yet.");
-            return;
+        ui.add_space(8.0);
+        if ui
+            .add_enabled(
+                enabled,
+                egui::Button::new(format!("{}×", fmt_rate(app.map.play_rate))).small(),
+            )
+            .on_hover_text("Playback speed")
+            .clicked()
+        {
+            app.map.play_rate = next_play_rate(app.map.play_rate);
         }
-
-        let mut remove = None;
-        let mut fit = None;
-        ui.add_space(6.0);
-        for (i, file) in app.map.files.iter_mut().enumerate() {
-            let frame = egui::Frame::group(ui.style()).inner_margin(egui::Margin::symmetric(10, 6));
-            frame.show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                ui.horizontal(|ui| {
-                    let (rect, _) = ui.allocate_exact_size(Vec2::splat(12.0), egui::Sense::hover());
-                    ui.painter().rect_filled(rect, 3.0, file.color);
-                    ui.add(egui::Checkbox::new(&mut file.visible, ""));
-                    ui.label(egui::RichText::new(&file.name).color(NAV_TEXT))
-                        .on_hover_text(file.path.display().to_string());
-                });
-                ui.label(
-                    egui::RichText::new(format!(
-                        "{} track{}, {} points",
-                        file.tracks.len(),
-                        if file.tracks.len() == 1 { "" } else { "s" },
-                        file.points()
-                    ))
-                    .size(12.0)
-                    .color(NAV_MUTED),
-                );
-                ui.horizontal(|ui| {
-                    if ui.small_button(icons::with(icons::FIT, "Fit")).clicked() {
-                        fit = Some(i);
-                    }
-                    if ui
-                        .small_button(icons::CANCEL)
-                        .on_hover_text("Remove")
-                        .clicked()
-                    {
-                        remove = Some(i);
-                    }
-                });
-            });
-            ui.add_space(4.0);
-        }
-        if let Some(i) = fit {
-            if let Some(bounds) = app.map.files[i].bounds() {
-                fit_bounds(app, bounds);
-            }
-        }
-        if let Some(i) = remove {
-            app.map.files.remove(i);
+        ui.add_space(8.0);
+        if enabled {
+            let t = app.map.cursor_time.unwrap_or(tmin).clamp(tmin, tmax);
+            ui.weak(format!("{} UTC", crate::sun::format_clock(t)));
+        } else {
+            ui.weak("No timeline data yet");
         }
     });
+}
+
+fn fmt_rate(rate: f64) -> String {
+    if rate.fract() == 0.0 {
+        format!("{rate:.0}")
+    } else {
+        format!("{rate}")
+    }
+}
+
+/// The index of `track`'s fix with a time closest to `t` (the track is assumed to have at
+/// least one timed fix; its last point stands in if somehow none do).
+fn nearest_by_time(track: &Track, t: i64) -> usize {
+    track
+        .points
+        .iter()
+        .enumerate()
+        .filter_map(|(i, f)| f.time.map(|ft| (i, (ft - t).abs())))
+        .min_by_key(|&(_, diff)| diff)
+        .map_or(track.points.len().saturating_sub(1), |(i, _)| i)
 }
 
 fn add_file(app: &mut RidgeApp, path: PathBuf) {
@@ -262,7 +594,8 @@ fn add_file(app: &mut RidgeApp, path: PathBuf) {
                 name,
                 tracks: found,
                 color,
-                visible: true,
+                on_map: true,
+                in_timeline: true,
             });
             app.map.error = None;
             if fit_after {
@@ -461,7 +794,8 @@ fn canvas(app: &mut RidgeApp, ui: &mut egui::Ui) {
         }
     }
 
-    for file in app.map.files.iter().filter(|f| f.visible) {
+    let cursor_time = app.map.cursor_time;
+    for file in app.map.files.iter().filter(|f| f.on_map) {
         for track in &file.tracks {
             let points: Vec<Pos2> = track
                 .points
@@ -474,9 +808,15 @@ fn canvas(app: &mut RidgeApp, ui: &mut egui::Ui) {
                     Stroke::new(2.5, file.color),
                 ));
             }
-            if let Some(&last) = points.last() {
-                painter.circle_filled(last, 5.0, file.color);
-                painter.circle_stroke(last, 5.0, Stroke::new(1.5, Color32::BLACK));
+            // the timeline's scrubbed moment, when this track has times to match it against;
+            // otherwise just its last fix, as usual
+            let marked = cursor_time
+                .filter(|_| track.points.iter().any(|f| f.time.is_some()))
+                .map(|t| nearest_by_time(track, t))
+                .unwrap_or(points.len().wrapping_sub(1));
+            if let Some(&at) = points.get(marked) {
+                painter.circle_filled(at, 5.0, file.color);
+                painter.circle_stroke(at, 5.0, Stroke::new(1.5, Color32::BLACK));
             }
         }
     }

@@ -12,13 +12,18 @@ use std::path::Path;
 
 use crate::sun::{days_from_civil, DAY};
 
-/// One fix: where, and when the file says so.
+/// One fix: where, and when, how high and how fast the file says so.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Fix {
     pub lat: f64,
     pub lon: f64,
     /// Unix seconds, when the format and the file both give a time.
     pub time: Option<i64>,
+    /// Metres above sea level, when the format gives one.
+    pub alt: Option<f64>,
+    /// Metres per second, when the format gives one directly (NMEA RMC, AIS, ADS-B); otherwise
+    /// filled in afterwards from consecutive timed fixes, see `fill_missing_speeds`.
+    pub speed: Option<f64>,
 }
 
 /// One path through a file: a GPX track, an AIS ship, an ADS-B aircraft, a KML placemark. A
@@ -36,7 +41,7 @@ pub fn load(path: &Path) -> Result<Vec<Track>, String> {
         .extension()
         .and_then(|e| e.to_str())
         .map(|e| e.to_ascii_lowercase());
-    match ext.as_deref() {
+    let mut tracks = match ext.as_deref() {
         Some("gpx") => gpx::parse(&read_text(path)?),
         Some("kml") => kml::parse(&read_text(path)?),
         Some("kmz") => kml::parse_kmz(&std::fs::read(path).map_err(|e| e.to_string())?),
@@ -44,15 +49,54 @@ pub fn load(path: &Path) -> Result<Vec<Track>, String> {
         _ => {
             if let Ok(bytes) = std::fs::read(path) {
                 if bytes.starts_with(b"PK\x03\x04") {
-                    return kml::parse_kmz(&bytes);
+                    kml::parse_kmz(&bytes)
+                } else if let Ok(text) = String::from_utf8(bytes) {
+                    sniff_text(&text)
+                } else {
+                    Err(
+                        "unrecognised file: expected .nmea, .gpx, .kml, .kmz or an ADS-B SBS log"
+                            .into(),
+                    )
                 }
-                if let Ok(text) = String::from_utf8(bytes) {
-                    return sniff_text(&text);
-                }
+            } else {
+                Err(
+                    "unrecognised file: expected .nmea, .gpx, .kml, .kmz or an ADS-B SBS log"
+                        .into(),
+                )
             }
-            Err("unrecognised file: expected .nmea, .gpx, .kml, .kmz or an ADS-B SBS log".into())
+        }
+    }?;
+    for track in &mut tracks {
+        fill_missing_speeds(track);
+    }
+    Ok(tracks)
+}
+
+/// A format that gives no speed of its own (GPX, KML) still lets one be worked out: the
+/// great-circle distance between consecutive timed fixes, divided by the time between them.
+fn fill_missing_speeds(track: &mut Track) {
+    for i in 1..track.points.len() {
+        if track.points[i].speed.is_some() {
+            continue;
+        }
+        let (prev, this) = (track.points[i - 1], track.points[i]);
+        if let (Some(t0), Some(t1)) = (prev.time, this.time) {
+            let dt = (t1 - t0) as f64;
+            if dt > 0.0 {
+                track.points[i].speed = Some(haversine_metres(prev, this) / dt);
+            }
         }
     }
+}
+
+/// The great-circle distance between two fixes, in metres (the Earth taken as a sphere, which
+/// is accurate enough over the short hops between consecutive track points).
+fn haversine_metres(a: Fix, b: Fix) -> f64 {
+    const EARTH_RADIUS_M: f64 = 6_371_000.0;
+    let (lat1, lat2) = (a.lat.to_radians(), b.lat.to_radians());
+    let (dlat, dlon) = ((b.lat - a.lat).to_radians(), (b.lon - a.lon).to_radians());
+    let h = (dlat / 2.0).sin().powi(2) + lat1.cos() * lat2.cos() * (dlon / 2.0).sin().powi(2);
+    2.0 * EARTH_RADIUS_M * h.sqrt().asin()
 }
 
 fn read_text(path: &Path) -> Result<String, String> {
@@ -132,5 +176,39 @@ mod tests {
             parse_iso8601("2024-05-01T10:00:00+02:00"),
             parse_iso8601("2024-05-01T08:00:00Z")
         );
+    }
+
+    fn fix(lat: f64, lon: f64, time: i64) -> Fix {
+        Fix {
+            lat,
+            lon,
+            time: Some(time),
+            alt: None,
+            speed: None,
+        }
+    }
+
+    #[test]
+    fn a_missing_speed_is_worked_out_from_the_next_timed_fix() {
+        // Paris to Lyon, about 390 km, in one hour: a plausible flight, not a stroll
+        let mut track = Track {
+            name: "Track".into(),
+            points: vec![fix(48.8566, 2.3522, 0), fix(45.7640, 4.8357, 3600)],
+        };
+        fill_missing_speeds(&mut track);
+        assert!(track.points[0].speed.is_none());
+        let kmh = track.points[1].speed.unwrap() * 3.6;
+        assert!((300.0..450.0).contains(&kmh), "{kmh} km/h");
+    }
+
+    #[test]
+    fn an_explicit_speed_is_kept() {
+        let mut track = Track {
+            name: "Track".into(),
+            points: vec![fix(0.0, 0.0, 0), fix(0.0, 1.0, 3600)],
+        };
+        track.points[1].speed = Some(1.0);
+        fill_missing_speeds(&mut track);
+        assert_eq!(track.points[1].speed, Some(1.0));
     }
 }

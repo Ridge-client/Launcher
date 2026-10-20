@@ -63,12 +63,21 @@ fn child_text(node: Node, name: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-/// A `trkpt`, `rtept` or `wpt`: its `lat`/`lon` attributes and, when it has one, its `time`.
+/// A `trkpt`, `rtept` or `wpt`: its `lat`/`lon` attributes and, when it has them, its `time`
+/// and `ele` (elevation, metres). GPX has no speed of its own; `fill_missing_speeds` works one
+/// out from consecutive timed fixes once the whole track is read.
 fn point(node: Node) -> Option<Fix> {
     let lat: f64 = node.attribute("lat")?.parse().ok()?;
     let lon: f64 = node.attribute("lon")?.parse().ok()?;
     let time = child_text(node, "time").and_then(|t| super::parse_iso8601(&t));
-    Some(Fix { lat, lon, time })
+    let alt = child_text(node, "ele").and_then(|e| e.parse().ok());
+    Some(Fix {
+        lat,
+        lon,
+        time,
+        alt,
+        speed: None,
+    })
 }
 
 #[cfg(test)]
@@ -80,7 +89,7 @@ mod tests {
   <trk>
     <name>Morning walk</name>
     <trkseg>
-      <trkpt lat="48.8584" lon="2.2945"><time>2024-05-01T08:00:00Z</time></trkpt>
+      <trkpt lat="48.8584" lon="2.2945"><ele>35.2</ele><time>2024-05-01T08:00:00Z</time></trkpt>
       <trkpt lat="48.8600" lon="2.2950"><time>2024-05-01T08:05:30Z</time></trkpt>
     </trkseg>
   </trk>
@@ -93,6 +102,7 @@ mod tests {
         let walk = tracks.iter().find(|t| t.name == "Morning walk").unwrap();
         assert_eq!(walk.points.len(), 2);
         assert_eq!(walk.points[0].lat, 48.8584);
+        assert_eq!(walk.points[0].alt, Some(35.2));
         assert!(walk.points[0].time.is_some());
         let later = walk.points[1].time.unwrap() - walk.points[0].time.unwrap();
         assert_eq!(later, 5 * 60 + 30);
