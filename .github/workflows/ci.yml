@@ -145,3 +145,19 @@ jobs:
           gh release create "$VERSION" \
             "dist/Ridge-Setup-$VERSION.exe" \
             --title "$VERSION" --notes-file notes.md --target "$GITHUB_SHA"
+      # Ridge asks for this file to see whether a newer release is out (and checks the Setup it
+      # downloads against its SHA-256). A plain download has no hourly limit, unlike api.github.com.
+      - name: Update manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          exe="Ridge-Setup-$VERSION.exe"
+          hash="sha256:$(sha256sum "dist/$exe" | cut -d' ' -f1)"
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$VERSION" \
+            | jq --arg exe "$exe" --arg hash "$hash" '[{
+                tag_name, html_url, body, draft: false,
+                assets: [.assets[] | {name, browser_download_url, size,
+                  digest: (if .name == $exe then $hash else .digest end)}]
+              }]' > update.json
+          gh release upload "$VERSION" update.json --clobber

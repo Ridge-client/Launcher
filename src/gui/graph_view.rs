@@ -231,6 +231,11 @@ fn run(st: &mut State, what: Pending, ctx: &egui::Context) {
 }
 
 /// Every frame, whatever the tab: closing Ridge with unsaved graph changes asks first.
+/// Whether the graph has changes not saved to its file.
+pub(super) fn has_unsaved(app: &RidgeApp) -> bool {
+    app.graph.dirty
+}
+
 pub(super) fn guard_close(app: &mut RidgeApp, ui: &mut egui::Ui) {
     let st = &mut app.graph;
     let asked = ui.ctx().input(|i| i.viewport().close_requested());

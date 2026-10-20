@@ -9,7 +9,9 @@
 ;   * puts the install folder on the user's PATH, so `ridge` works in any
 ;     new terminal, and takes it off again on uninstall,
 ;   * adds a Start menu "Ridge" shortcut; ridge.exe started without arguments
-;     opens its interactive prompt, so the window stays open.
+;     opens its interactive prompt, so the window stays open,
+;   * Ridge's own update runs it silently with /RELAUNCH=1, and it opens the
+;     new Ridge when it is done.
 
 #ifndef AppVersion
   #define AppVersion "0.0.0"
@@ -85,8 +87,17 @@ Name: "{group}\Uninstall {#AppName}"; Filename: "{uninstallexe}"
 [Run]
 Filename: "{app}\{#AppExeName}"; WorkingDir: "{%USERPROFILE}"; \
   Description: "Open Ridge"; Flags: postinstall nowait skipifsilent
+; Ridge's update runs Setup silently and wants the new Ridge back
+Filename: "{app}\{#AppExeName}"; WorkingDir: "{%USERPROFILE}"; \
+  Flags: nowait; Check: RelaunchAfterInstall
 
 [Code]
+// True when Ridge's own update started Setup (/RELAUNCH=1).
+function RelaunchAfterInstall(): Boolean;
+begin
+  Result := ExpandConstant('{param:RELAUNCH|0}') = '1';
+end;
+
 // The PATH value is compared with ';' on both ends, so C:\Ridge never matches C:\Ridge2.
 function PathHas(Path, Dir: string): Integer;
 begin

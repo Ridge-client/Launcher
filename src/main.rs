@@ -12,6 +12,7 @@ mod gui;
 mod persona;
 mod sun;
 mod ui;
+mod update;
 
 use std::process::ExitCode;
 use std::time::Duration;

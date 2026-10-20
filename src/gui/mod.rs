@@ -11,6 +11,7 @@ mod icons;
 mod persona_view;
 mod settings_view;
 mod sun_view;
+mod update_view;
 mod zoom;
 
 use std::collections::{BTreeMap, HashMap};
@@ -46,6 +47,14 @@ enum Msg {
         id: String,
         result: Result<Vec<crate::persona::firewall::Check>, String>,
     },
+    /// Whether a newer release is out; `asked` when the user clicked to check.
+    UpdateChecked {
+        result: Result<Option<crate::update::Update>, String>,
+        asked: bool,
+    },
+    /// The update's download: progress (0..1), then the checked Setup.
+    UpdateProgress(f32),
+    UpdateDownloaded(Result<PathBuf, String>),
 }
 
 #[derive(Debug, Clone, Default)]
@@ -111,6 +120,7 @@ struct RidgeApp {
     annotate: annotate_view::State,
     shadows: sun_view::State,
     settings: settings_view::State,
+    update: update_view::State,
 }
 
 impl RidgeApp {
@@ -137,6 +147,7 @@ impl RidgeApp {
             annotate: annotate_view::State::default(),
             shadows: sun_view::State::load(cc.storage),
             settings: settings_view::State::default(),
+            update: update_view::State::default(),
         };
         catalog_view::check_on_start(&mut app);
         app
@@ -192,6 +203,9 @@ impl RidgeApp {
                     persona_view::refresh(self);
                 }
                 Msg::SettingsChecks { id, result } => self.settings.checks_done(id, result),
+                Msg::UpdateChecked { result, asked } => update_view::checked(self, result, asked),
+                Msg::UpdateProgress(p) => update_view::progress(self, p),
+                Msg::UpdateDownloaded(result) => update_view::downloaded(self, result),
             }
         }
     }
@@ -236,11 +250,7 @@ impl eframe::App for RidgeApp {
                         persona_view::refresh(self);
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(
-                            egui::RichText::new(format!("v{}", env!("CARGO_PKG_VERSION")))
-                                .size(12.0)
-                                .color(NAV_MUTED),
-                        );
+                        update_view::version_label(self, ui);
                     });
                 });
                 // the hairline under the bar
@@ -260,6 +270,8 @@ impl eframe::App for RidgeApp {
             Tab::Shadows => sun_view::show(self, ui),
             Tab::Settings => settings_view::show(self, ui),
         });
+        update_view::dialog(self, ui);
+        update_view::tick(self);
         graph_view::guard_close(self, ui);
         // the built-in browser is a native window over ours: only the Personas tab shows it
         if self.tab != Tab::Personas {
@@ -272,6 +284,7 @@ impl eframe::App for RidgeApp {
             || self.personas.loading
             || self.personas.image_progress.is_some()
             || self.settings.busy()
+            || self.update.busy()
         {
             self.ctx
                 .request_repaint_after(std::time::Duration::from_millis(100));
