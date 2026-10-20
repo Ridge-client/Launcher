@@ -150,7 +150,7 @@ pub(super) fn show(app: &mut RidgeApp, ui: &mut egui::Ui) {
         }
         if st.running {
             ui.spinner();
-            ui.weak("asking Overpass…");
+            ui.weak("Loading…");
         }
         match &st.status {
             Some((text, true)) => {
@@ -192,6 +192,15 @@ pub(super) fn show(app: &mut RidgeApp, ui: &mut egui::Ui) {
 
 /// The query editor, the results and the chosen result's tags.
 fn side(st: &mut State, ui: &mut egui::Ui) {
+    // the chosen result's box stays at the bottom, whatever the list holds
+    egui::Panel::bottom("overpass_details")
+        .resizable(false)
+        .exact_size(190.0)
+        .frame(egui::Frame::new())
+        .show(ui, |ui| {
+            ui.add_space(6.0);
+            details(st, ui);
+        });
     let total = ui.available_height();
     egui::ScrollArea::vertical()
         .id_salt("overpass_query")
@@ -206,19 +215,15 @@ fn side(st: &mut State, ui: &mut egui::Ui) {
             );
         });
     ui.add_space(8.0);
-    ui.horizontal(|ui| {
-        ui.label(egui::RichText::new("Results").strong());
-    });
+    ui.label(egui::RichText::new("Results").strong());
     if st.features.is_empty() {
         ui.weak("Move the map to the place and Run. {{bbox}} stands for the map in view.");
         return;
     }
     let row_h = ui.spacing().interact_size.y;
-    let details_h = if st.selected.is_some() { 150.0 } else { 0.0 };
     egui::ScrollArea::vertical()
         .id_salt("overpass_results")
         .auto_shrink(false)
-        .max_height((ui.available_height() - details_h - 12.0).max(60.0))
         .show_rows(ui, row_h, st.features.len(), |ui, rows| {
             for i in rows {
                 let f = &st.features[i];
@@ -236,32 +241,52 @@ fn side(st: &mut State, ui: &mut egui::Ui) {
                 }
             }
         });
-    if let Some(f) = st.selected.and_then(|i| st.features.get(i)) {
-        ui.add_space(6.0);
-        egui::Frame::group(ui.style()).show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.horizontal(|ui| {
-                ui.label(egui::RichText::new(f.title()).strong());
-                let url = format!("https://www.openstreetmap.org/{}/{}", f.kind, f.id);
-                ui.hyperlink_to(format!("{}/{}", f.kind, f.id), url);
-            });
-            egui::ScrollArea::vertical()
-                .id_salt("overpass_tags")
-                .max_height(110.0)
-                .show(ui, |ui| {
-                    egui::Grid::new("overpass_tag_grid")
-                        .num_columns(2)
-                        .spacing([10.0, 2.0])
-                        .show(ui, |ui| {
-                            for (k, v) in &f.tags {
-                                ui.label(egui::RichText::new(k).color(NAV_MUTED));
-                                ui.add(egui::Label::new(v).wrap());
-                                ui.end_row();
-                            }
-                        });
-                });
+}
+
+/// The chosen result: its name, GPS coordinates and tags.
+fn details(st: &State, ui: &mut egui::Ui) {
+    egui::Frame::group(ui.style()).show(ui, |ui| {
+        ui.set_width(ui.available_width());
+        ui.set_min_height(ui.available_height() - 14.0);
+        let Some(f) = st.selected.and_then(|i| st.features.get(i)) else {
+            ui.weak("Pick a result to see its coordinates and tags.");
+            return;
+        };
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new(f.title()).strong());
+            let url = format!("https://www.openstreetmap.org/{}/{}", f.kind, f.id);
+            ui.hyperlink_to(format!("{}/{}", f.kind, f.id), url);
         });
-    }
+        if let Some((lat, lon)) = f.anchor() {
+            let gps = format!("{lat:.6}, {lon:.6}");
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("GPS").color(NAV_MUTED));
+                ui.monospace(&gps);
+                if ui
+                    .small_button("Copy")
+                    .on_hover_text("Copy the latitude and longitude")
+                    .clicked()
+                {
+                    ui.ctx().copy_text(gps);
+                }
+            });
+        }
+        egui::ScrollArea::vertical()
+            .id_salt("overpass_tags")
+            .auto_shrink(false)
+            .show(ui, |ui| {
+                egui::Grid::new("overpass_tag_grid")
+                    .num_columns(2)
+                    .spacing([10.0, 2.0])
+                    .show(ui, |ui| {
+                        for (k, v) in &f.tags {
+                            ui.label(egui::RichText::new(k).color(NAV_MUTED));
+                            ui.add(egui::Label::new(v).wrap());
+                            ui.end_row();
+                        }
+                    });
+            });
+    });
 }
 
 /// Distance in points from `p` to the segment `a`–`b`.
