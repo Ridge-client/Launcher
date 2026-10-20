@@ -10,6 +10,7 @@ mod cli;
 mod graph;
 mod gui;
 mod persona;
+mod sun;
 mod ui;
 
 use std::process::ExitCode;

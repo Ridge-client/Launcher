@@ -10,6 +10,8 @@ mod graph_view;
 mod icons;
 mod persona_view;
 mod settings_view;
+mod sun_view;
+mod zoom;
 
 use std::collections::{BTreeMap, HashMap};
 use std::future::Future;
@@ -66,6 +68,7 @@ enum Tab {
     Personas,
     Graph,
     Annotate,
+    Shadows,
     Settings,
 }
 
@@ -106,6 +109,7 @@ struct RidgeApp {
     personas: persona_view::State,
     graph: graph_view::State,
     annotate: annotate_view::State,
+    shadows: sun_view::State,
     settings: settings_view::State,
 }
 
@@ -131,6 +135,7 @@ impl RidgeApp {
             personas: persona_view::State::load(cc.storage),
             graph: graph_view::State::load(cc.storage),
             annotate: annotate_view::State::default(),
+            shadows: sun_view::State::load(cc.storage),
             settings: settings_view::State::default(),
         };
         catalog_view::check_on_start(&mut app);
@@ -197,6 +202,7 @@ impl eframe::App for RidgeApp {
         self.tools.save(storage);
         self.personas.save(storage);
         self.graph.save(storage);
+        self.shadows.save(storage);
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
@@ -218,6 +224,7 @@ impl eframe::App for RidgeApp {
                         (Tab::Personas, "Personas"),
                         (Tab::Graph, "Graph"),
                         (Tab::Annotate, "Annotate"),
+                        (Tab::Shadows, "Shadows"),
                         (Tab::Settings, "Settings"),
                     ] {
                         if nav_button(ui, label, self.tab == tab).clicked() {
@@ -250,6 +257,7 @@ impl eframe::App for RidgeApp {
             Tab::Personas => persona_view::show(self, ui, frame),
             Tab::Graph => graph_view::show(self, ui),
             Tab::Annotate => annotate_view::show(self, ui),
+            Tab::Shadows => sun_view::show(self, ui),
             Tab::Settings => settings_view::show(self, ui),
         });
         graph_view::guard_close(self, ui);

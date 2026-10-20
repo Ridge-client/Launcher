@@ -314,7 +314,7 @@ fn check_line(ui: &mut egui::Ui, c: &Check) {
     });
 }
 
-fn section(ui: &mut egui::Ui, title: &str, body: impl FnOnce(&mut egui::Ui)) {
+pub(super) fn section(ui: &mut egui::Ui, title: &str, body: impl FnOnce(&mut egui::Ui)) {
     egui::Frame::group(ui.style())
         .fill(ui.visuals().faint_bg_color)
         .inner_margin(egui::Margin::symmetric(14, 10))

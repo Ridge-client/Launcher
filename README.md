@@ -20,7 +20,7 @@
 ## About The Project
 
 **Ridge** is a Windows desktop app for OSINT investigations. It gathers the 1,700+ tools, runs sock-puppet personas in isolated VM that cannot
-reach your PC or your home network, maps what you find on investigation graphs, and marks up pictures for reports.
+reach your PC or your home network, maps what you find on investigation graphs, marks up pictures for reports, and dates pictures from their shadows.
 
 ### Built With
 
@@ -49,6 +49,7 @@ The installer is not code-signed yet, so Windows may warn: click **More info**, 
 * **Personas**: **Create persona** fills in an identity sheet next to ID generator sites, then **Start** opens its own browser in Docker, after a VPN, timezone and protection check. Each persona keeps its history, logins, notes and attached files.
 * **Graph**: add entities from the palette (people, accounts, places, money, infrastructure…), link them, arrange them with a layout, and **Save** the graph to a file (Ctrl+S).
 * **Annotate**: open a picture, draw numbered boxes on it, caption them, and **Export PNG**.
+* **Shadows**: find when a picture was taken from its shadows. Type the place, the way the camera faced (or draw it on a map screenshot), where the shadows point and how long they are next to the object, and Ridge lists the dates and times the sun stood like that, with its path drawn on a sky chart. **Copy** puts the clues and candidates on the clipboard for your report.
 * **Settings**: choose what the personas are kept away from (this PC, your home network, each other) and **Run checks** to prove it.
 
 ## Credits

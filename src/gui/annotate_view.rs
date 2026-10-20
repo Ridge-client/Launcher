@@ -8,6 +8,7 @@ use anyhow::Context;
 use eframe::egui::{self, Color32, Pos2, Rect, Stroke, Vec2};
 
 use super::icons;
+use super::zoom::Zoom;
 use super::RidgeApp;
 use crate::annotate::{self, Annotated, Mark, COLOURS};
 
@@ -31,6 +32,9 @@ pub(super) struct State {
     status: Option<(String, bool)>,
     /// A picture to open in place of one that has boxes, once the user agrees.
     replacing: Option<PathBuf>,
+    zoom: Zoom,
+    /// Where the canvas was on the last frame, for the zoom buttons.
+    canvas: Option<Rect>,
 }
 
 #[derive(Clone, Copy)]
@@ -85,6 +89,7 @@ fn open_picture(st: &mut State, file: PathBuf, confirmed: bool) {
     st.selected = None;
     st.drag = None;
     st.status = None;
+    st.zoom = Zoom::default();
 }
 
 fn choose_picture(st: &mut State) {
@@ -182,6 +187,11 @@ fn toolbar(st: &mut State, ui: &mut egui::Ui) {
             }
         }
         ui.separator();
+        if let (Some((.., size)), Some(canvas)) = (&st.texture, st.canvas) {
+            let size = *size;
+            st.zoom.buttons(ui, canvas, size);
+            ui.separator();
+        }
         if ui
             .button(icons::with(icons::DOWNLOAD, "Export PNG…"))
             .on_hover_text("The picture with its boxes and numbers, and a legend of the captions")
@@ -198,7 +208,7 @@ fn toolbar(st: &mut State, ui: &mut egui::Ui) {
             ui.weak(text);
         }
         None => {
-            ui.weak("Drag on the picture to box something · drag a box's edge to move it, its corner to resize · Delete removes the selected box");
+            ui.weak("Drag on the picture to box something · drag a box's edge to move it, its corner to resize · Delete removes the selected box · Ctrl+scroll zooms");
         }
     }
 }
@@ -263,11 +273,10 @@ fn canvas(st: &mut State, ui: &mut egui::Ui) {
         return;
     };
 
-    // the picture fitted in the area, centred
-    let scale = ((area.width() - 24.0) / size[0])
-        .min((area.height() - 24.0) / size[1])
-        .max(0.01);
-    let shown = Rect::from_center_size(area.center(), Vec2::new(size[0], size[1]) * scale);
+    // the picture fitted in the area, centred, then zoomed
+    st.canvas = Some(area);
+    st.zoom.interact(ui, &response, area, size);
+    let (shown, scale) = st.zoom.place(area, size);
     painter.image(
         tex,
         shown,
@@ -322,7 +331,7 @@ fn canvas(st: &mut State, ui: &mut egui::Ui) {
         });
     }
 
-    if response.drag_started() {
+    if response.drag_started_by(egui::PointerButton::Primary) {
         if let Some(p) = pointer {
             st.drag = match under {
                 Some(Drag::Move(i)) => {
