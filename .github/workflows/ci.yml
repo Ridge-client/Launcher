@@ -27,6 +27,35 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo clippy --locked --all-targets --all-features -- -D warnings
 
+  # A chore commit is a version bump and nothing else: "chore: version X.Y.Z".
+  commits:
+    name: commit messages
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: 'Chore commits must be "chore: version X.Y.Z"'
+        env:
+          BEFORE: ${{ github.event.before }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          from="${BASE:-$BEFORE}"
+          if [ -n "$from" ] && git cat-file -e "$from^{commit}" 2>/dev/null && [ "${from//0/}" != "" ]; then
+            range="$from..$HEAD"
+          else
+            range="$HEAD^!"
+          fi
+          bad=0
+          while IFS= read -r subject; do
+            if [[ "$subject" =~ ^[Cc]hore ]] && ! [[ "$subject" =~ ^chore:\ version\ [0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "::error::'$subject' is not a valid chore: use 'chore: version X.Y.Z' (numbers and dots only)"
+              bad=1
+            fi
+          done < <(git log --format=%s "$range")
+          exit $bad
+
   test:
     name: test
     runs-on: windows-latest
