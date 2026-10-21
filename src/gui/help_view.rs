@@ -9,7 +9,7 @@ const ISSUES: &str = "https://github.com/Ridge-client/Launcher/issues/new";
 /// Each tab: its name and how it works, a line at a time.
 const TABS: [(&str, &[&str]); 10] = [
     (
-        "OSINT tools",
+        "Tools list",
         &[
             "Search the catalog by name, category or type; Open opens a tool in your browser.",
             "Ridge checks every site at each start: active, guarded (behind a check page) or down. Hide down sites keeps the list short.",

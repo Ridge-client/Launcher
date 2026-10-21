@@ -193,29 +193,7 @@ pub(super) fn show(app: &mut RidgeApp, ui: &mut egui::Ui) {
         open_pictures(st, ui.ctx(), dropped);
     }
 
-    if st.docs.is_empty() {
-        ui.add_space(60.0);
-        ui.vertical_centered(|ui| {
-            ui.label(egui::RichText::new(icons::IMAGE).size(48.0).weak());
-            ui.heading("Annotate pictures");
-            ui.weak(
-                "Open pictures (or drop them on the window), then drag on one to box what matters.",
-            );
-            ui.weak("Each box gets a number and a colour; export it all as one PNG with a legend.");
-            ui.add_space(12.0);
-            if ui
-                .button(icons::with(icons::FOLDER_OPEN, "Open pictures…"))
-                .clicked()
-            {
-                choose_pictures(st, ui.ctx());
-            }
-            if let Some((text, true)) = &st.status {
-                ui.colored_label(Color32::from_rgb(218, 54, 51), text);
-            }
-        });
-        return;
-    }
-    st.active = st.active.min(st.docs.len() - 1);
+    st.active = st.active.min(st.docs.len().saturating_sub(1));
     let side = |ui: &egui::Ui| {
         egui::Frame::new()
             .fill(ui.visuals().panel_fill)
@@ -250,7 +228,7 @@ pub(super) fn show(app: &mut RidgeApp, ui: &mut egui::Ui) {
 fn images_panel(st: &mut State, ui: &mut egui::Ui) {
     ui.add_space(8.0);
     if ui
-        .button(icons::with(icons::FOLDER_OPEN, "Open…"))
+        .button(icons::with(icons::FOLDER_OPEN, "Import…"))
         .on_hover_text("Open more pictures (or drop them on the window)")
         .clicked()
     {
@@ -343,16 +321,20 @@ fn toolbar(st: &mut State, ui: &mut egui::Ui) {
             st.tool = Tool::Annotate;
         }
         ui.separator();
-        let doc = &mut st.docs[st.active];
-        ui.add(egui::TextEdit::singleline(&mut doc.image.name).desired_width(160.0))
-            .on_hover_text("Name of this image");
-        ui.separator();
-        if let Some(canvas) = st.canvas {
-            doc.zoom.buttons(ui, canvas, doc.size, false);
+        if let Some(doc) = st.docs.get_mut(st.active) {
+            ui.add(egui::TextEdit::singleline(&mut doc.image.name).desired_width(160.0))
+                .on_hover_text("Name of this image");
             ui.separator();
+            if let Some(canvas) = st.canvas {
+                doc.zoom.buttons(ui, canvas, doc.size, false);
+                ui.separator();
+            }
         }
         if ui
-            .button(icons::with(icons::DOWNLOAD, "Export PNG…"))
+            .add_enabled(
+                !st.docs.is_empty(),
+                egui::Button::new(icons::with(icons::DOWNLOAD, "Export PNG…")),
+            )
             .on_hover_text("The picture with its boxes and numbers, and a legend of the captions")
             .clicked()
         {
@@ -360,7 +342,7 @@ fn toolbar(st: &mut State, ui: &mut egui::Ui) {
         }
         if st.docs.len() > 1
             && ui
-                .button("Export all…")
+                .button(icons::with(icons::DOWNLOAD, "Export all…"))
                 .on_hover_text("Every open picture, as a PNG each, into a folder")
                 .clicked()
         {
@@ -369,7 +351,7 @@ fn toolbar(st: &mut State, ui: &mut egui::Ui) {
     });
     ui.add_space(4.0);
     ui.horizontal(|ui| {
-        let doc = &mut st.docs[st.active];
+        let mut doc = st.docs.get_mut(st.active);
         ui.label("Colour");
         for (i, rgb) in COLOURS.iter().enumerate() {
             let (rect, r) = ui.allocate_exact_size(Vec2::splat(20.0), egui::Sense::click());
@@ -388,8 +370,10 @@ fn toolbar(st: &mut State, ui: &mut egui::Ui) {
                 .on_hover_text("Colour of the next box (and of the selected one)");
             if r.clicked() {
                 st.colour = i;
-                if let Some(m) = doc.selected.and_then(|s| doc.image.marks.get_mut(s)) {
-                    m.colour = *rgb;
+                if let Some(doc) = doc.as_deref_mut() {
+                    if let Some(m) = doc.selected.and_then(|s| doc.image.marks.get_mut(s)) {
+                        m.colour = *rgb;
+                    }
                 }
             }
         }
@@ -468,7 +452,17 @@ fn canvas(st: &mut State, ui: &mut egui::Ui) {
     let painter = ui.painter_at(area);
     painter.rect_filled(area, 0.0, ui.visuals().extreme_bg_color);
     let (tool, active_colour) = (st.tool, st.colour);
-    let doc = &mut st.docs[st.active];
+    let Some(doc) = st.docs.get_mut(st.active) else {
+        st.canvas = None;
+        painter.text(
+            area.center(),
+            egui::Align2::CENTER_CENTER,
+            "Open pictures (or drop them on the window), then drag on one to box what matters.",
+            egui::FontId::proportional(14.0),
+            ui.visuals().weak_text_color(),
+        );
+        return;
+    };
     let (tex, size) = (doc.texture.id(), doc.size);
 
     // the picture fitted in the area, centred, then zoomed
@@ -650,7 +644,12 @@ fn canvas(st: &mut State, ui: &mut egui::Ui) {
 
 /// Every box: its number and colour, caption, recolour and remove.
 fn marks_panel(st: &mut State, ui: &mut egui::Ui) {
-    let doc = &mut st.docs[st.active];
+    let Some(doc) = st.docs.get_mut(st.active) else {
+        ui.add_space(8.0);
+        ui.heading("Boxes");
+        ui.weak("Open a picture, pick Annotate (A) and drag on it to box something.");
+        return;
+    };
     ui.add_space(8.0);
     ui.horizontal(|ui| {
         ui.heading("Boxes");
@@ -722,7 +721,7 @@ fn marks_panel(st: &mut State, ui: &mut egui::Ui) {
                         }
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if ui
-                                .small_button(icons::DELETE)
+                                .button(icons::DELETE)
                                 .on_hover_text("Remove this box")
                                 .clicked()
                             {

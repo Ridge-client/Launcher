@@ -262,7 +262,7 @@ fn reference_help(st: &mut State, ui: &mut egui::Ui) {
                 if ui
                     .add_enabled(
                         (1..=200_000).contains(&len),
-                        egui::Button::new("Copy text"),
+                        egui::Button::new(icons::with(icons::COPY, "Copy text")),
                     )
                     .on_hover_text("Lines of 100 characters, ready to paste in the editor")
                     .clicked()

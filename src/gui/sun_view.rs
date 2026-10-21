@@ -406,10 +406,10 @@ fn pane_header(st: &mut State, view: View, ui: &mut egui::Ui) {
         ui.label(egui::RichText::new(title).strong().size(15.0))
             .on_hover_text(hint);
         let open = if loaded {
-            ui.small_button(icons::FOLDER_OPEN)
+            ui.button(icons::with(icons::FOLDER_OPEN, "Import…"))
                 .on_hover_text("Open another image (or drop one here)")
         } else {
-            ui.small_button(icons::with(icons::FOLDER_OPEN, "Open…"))
+            ui.button(icons::with(icons::FOLDER_OPEN, "Import…"))
                 .on_hover_text(match view {
                     View::Photo => "The picture, to measure the shadow on (or drop it here)",
                     View::Map => "A map or satellite screenshot of the place (or drop it here)",
@@ -1420,7 +1420,7 @@ fn candidates(st: &mut State, clues: &Result<Clues, &'static str>, ui: &mut egui
         if !windows.is_empty() {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui
-                    .button(icons::with(icons::FILE_TEXT, "Copy"))
+                    .button(icons::with(icons::COPY, "Copy"))
                     .on_hover_text("Copy the clues and the candidates, for a report")
                     .clicked()
                 {

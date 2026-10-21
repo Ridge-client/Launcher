@@ -41,6 +41,7 @@ pub const LAYOUT_CIRCLE: &str = "\u{E602}"; // circle-dashed
 pub const LAYOUT_ORGANIC: &str = "\u{EB58}"; // graph
 pub const LAYOUT_LIVE: &str = "\u{E5E4}"; // atom
 pub const GRID: &str = "\u{E1FC}"; // dots-nine
+pub const COPY: &str = "\u{E1CA}"; // copy
 pub const FIT: &str = "\u{E0A4}"; // arrows-out-cardinal
 
 pub fn install(ctx: &egui::Context) {

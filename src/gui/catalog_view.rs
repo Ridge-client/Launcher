@@ -1,4 +1,4 @@
-//! "OSINT tools" tab: search, filter, check status and open tools.
+//! "Tools list" tab: search, filter, check status and open tools.
 
 use std::time::Duration;
 

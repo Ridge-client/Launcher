@@ -1340,7 +1340,7 @@ fn node_details(st: &mut State, ui: &mut egui::Ui, id: u64) {
                 }
             }
         }
-        if !node.picture.is_empty() && ui.button(icons::with(icons::CANCEL, "Remove")).clicked() {
+        if !node.picture.is_empty() && ui.button(icons::with(icons::DELETE, "Remove")).clicked() {
             node.picture.clear();
             node.picture_name.clear();
         }
@@ -1375,7 +1375,7 @@ fn node_details(st: &mut State, ui: &mut egui::Ui, id: u64) {
             link_label_edit(ui, &mut link.label, ("graph_link_label", i), 110.0);
             ui.label(titles.get(&other).cloned().unwrap_or_default());
             if ui
-                .small_button(icons::DELETE)
+                .button(icons::DELETE)
                 .on_hover_text("Remove link")
                 .clicked()
             {

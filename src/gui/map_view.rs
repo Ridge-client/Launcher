@@ -320,7 +320,7 @@ fn sidebar(app: &mut RidgeApp, ui: &mut egui::Ui) {
     );
     ui.add_space(8.0);
     if ui
-        .button(icons::with(icons::FOLDER_OPEN, "Add files…"))
+        .button(icons::with(icons::FOLDER_OPEN, "Import…"))
         .on_hover_text("NMEA, GPX, KML/KMZ or an ADS-B SBS log (or drop one on the map)")
         .clicked()
     {
@@ -380,14 +380,10 @@ fn sidebar(app: &mut RidgeApp, ui: &mut egui::Ui) {
         });
         ui.add_space(4.0);
         ui.horizontal(|ui| {
-            if ui.small_button(icons::with(icons::FIT, "Fit")).clicked() {
+            if ui.button(icons::with(icons::FIT, "Fit")).clicked() {
                 fit = Some(i);
             }
-            if ui
-                .small_button(icons::CANCEL)
-                .on_hover_text("Remove")
-                .clicked()
-            {
+            if ui.button(icons::DELETE).on_hover_text("Remove").clicked() {
                 remove = Some(i);
             }
         });

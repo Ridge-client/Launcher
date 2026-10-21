@@ -268,7 +268,7 @@ impl eframe::App for RidgeApp {
                     ui.spacing_mut().item_spacing.x = 2.0;
                     let before = self.tab;
                     for (tab, label) in [
-                        (Tab::Tools, "OSINT tools"),
+                        (Tab::Tools, "Tools list"),
                         (Tab::Personas, "Personas"),
                         (Tab::Graph, "Graph"),
                         (Tab::Annotate, "Annotate"),

@@ -123,7 +123,7 @@ fn photo_picker(app: &mut RidgeApp, ui: &mut egui::Ui) {
                     .file_name()
                     .map_or(path.clone(), |n| n.to_string_lossy().into_owned());
                 ui.weak(name).on_hover_text(&path);
-                if ui.button(icons::with(icons::CANCEL, "Remove")).clicked() {
+                if ui.button(icons::with(icons::DELETE, "Remove")).clicked() {
                     app.personas.form.profile.photo_file.clear();
                 }
             }
@@ -269,7 +269,7 @@ fn records_form(ui: &mut egui::Ui, group: &Group, records: &mut Vec<Record>) {
                         }
                     });
                 if ui
-                    .small_button(icons::with(
+                    .button(icons::with(
                         icons::DELETE,
                         &format!("Remove {}", group.item),
                     ))

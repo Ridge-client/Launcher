@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use eframe::egui::{self, Color32, Pos2, Rect, Stroke, Vec2};
 
+use super::icons;
 use super::map_view::{self, Viewport};
 use super::{Msg, RidgeApp, NAV_ACCENT, NAV_MUTED};
 use crate::overpass::{self, Feature};
@@ -128,7 +129,7 @@ pub(super) fn show(app: &mut RidgeApp, ui: &mut egui::Ui) {
         let run = ui
             .add_enabled(
                 !st.running,
-                egui::Button::new(egui::RichText::new("▶  Run").strong().color(Color32::BLACK))
+                egui::Button::new(egui::RichText::new("Run").strong().color(Color32::BLACK))
                     .fill(NAV_ACCENT),
             )
             .on_hover_text("Run the query over the map in view (Ctrl+Enter)");
@@ -136,14 +137,17 @@ pub(super) fn show(app: &mut RidgeApp, ui: &mut egui::Ui) {
         if ui
             .add_enabled(
                 !st.features.is_empty(),
-                egui::Button::new("Export GeoJSON…"),
+                egui::Button::new(icons::with(icons::DOWNLOAD, "Export GeoJSON…")),
             )
             .clicked()
         {
             export(st);
         }
         if ui
-            .add_enabled(!st.features.is_empty(), egui::Button::new("Fit results"))
+            .add_enabled(
+                !st.features.is_empty(),
+                egui::Button::new(icons::with(icons::FIT, "Fit results")),
+            )
             .clicked()
         {
             st.fit = true;
@@ -263,7 +267,7 @@ fn details(st: &State, ui: &mut egui::Ui) {
                 ui.label(egui::RichText::new("GPS").color(NAV_MUTED));
                 ui.monospace(&gps);
                 if ui
-                    .small_button("Copy")
+                    .button(icons::with(icons::COPY, "Copy"))
                     .on_hover_text("Copy the latitude and longitude")
                     .clicked()
                 {

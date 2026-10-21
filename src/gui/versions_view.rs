@@ -5,8 +5,8 @@
 use eframe::egui::{self, Color32};
 
 use super::{
-    caps, card, page_title, primary_button, update_view, Msg, RidgeApp, NAV_ACCENT, NAV_MUTED,
-    NAV_TEXT,
+    caps, card, icons, page_title, primary_button, update_view, Msg, RidgeApp, NAV_ACCENT,
+    NAV_MUTED, NAV_TEXT,
 };
 use crate::update::{self, Release};
 
@@ -135,7 +135,7 @@ fn changelog(app: &mut RidgeApp, ui: &mut egui::Ui) {
                     )
                     .color(NAV_MUTED),
                 );
-                retry = ui.button("Try again").clicked();
+                retry = ui.button(icons::with(icons::RETRY, "Try again")).clicked();
             }
             Some(Ok(list)) if list.is_empty() => {
                 ui.label(egui::RichText::new("No release yet.").color(NAV_MUTED));

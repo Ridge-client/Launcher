@@ -47,7 +47,7 @@ Ridge keeps itself up to date: an orange dot by **Versions**, at the right of th
 
 ## Usage
 
-* **OSINT tools**: search the catalog by name, category or type; Ridge marks each site up or down, and **Open** opens it in your browser.
+* **Tools list**: search the catalog by name, category or type; Ridge marks each site up or down, and **Open** opens it in your browser.
 * **Personas**: **Create persona** fills in an identity sheet next to ID generator sites, then **Start** opens its own browser in Docker, after a VPN, timezone and protection check. Each persona keeps its history, logins, notes and attached files.
 * **Graph**: add entities from the palette (people, accounts, places, money, infrastructure…), link them, arrange them with a layout, and **Save** the graph to a file (Ctrl+S).
 * **Annotate**: open several pictures (left panel), draw numbered boxes in 16 colours with the Annotate tool, renumber and caption them, move and zoom with the Pointer tool, and **Export PNG** (or all at once).
