@@ -78,6 +78,8 @@ pub(super) struct State {
     alphabet: String,
     order: usize,
     status: Option<(String, bool)>,
+    /// The reference-text window is open.
+    help: bool,
 }
 
 impl Default for State {
@@ -97,6 +99,7 @@ impl Default for State {
             alphabet: DEFAULT_ALPHABET.into(),
             order: 2,
             status: None,
+            help: false,
         }
     }
 }
@@ -114,18 +117,18 @@ pub(super) fn show(app: &mut RidgeApp, ui: &mut egui::Ui) {
     ui.add_space(4.0);
     toolbar(st, ui);
     ui.add_space(2.0);
-    match &st.status {
-        Some((text, true)) => {
-            ui.colored_label(Color32::from_rgb(218, 54, 51), text);
-        }
-        Some((text, false)) => {
-            ui.weak(text);
-        }
-        None => {
-            ui.weak("1 · Open the pixelated picture and drag over the pixelated text · 2 · Open a reference: the same font, typed from the text below and screenshotted at the same size · 3 · Recover");
-        }
-    }
-    reference_help(st, ui);
+    // one line, always: the status never changes the height of what is below
+    let (text, colour) = match &st.status {
+        Some((text, true)) => (text.as_str(), Color32::from_rgb(218, 54, 51)),
+        Some((text, false)) => (text.as_str(), ui.visuals().weak_text_color()),
+        None => (
+            "Open the pixelated picture and the reference, select the text, then Recover",
+            ui.visuals().weak_text_color(),
+        ),
+    };
+    ui.add(egui::Label::new(egui::RichText::new(text).color(colour)).truncate())
+        .on_hover_text(text);
+    reference_help(st, ui.ctx());
     ui.add_space(4.0);
     let st = &mut *st;
     ui.columns(2, |cols| {
@@ -163,10 +166,13 @@ fn poll(st: &mut State, ctx: &egui::Context) {
 }
 
 fn toolbar(st: &mut State, ui: &mut egui::Ui) {
-    ui.horizontal_wrapped(|ui| {
+    ui.horizontal(|ui| {
         if ui
             .button(icons::with(icons::FOLDER_OPEN, "Pixelated picture…"))
-            .on_hover_text("The screenshot with the pixelated text")
+            .on_hover_text(match &st.pixelated {
+                Some(p) => format!("The screenshot with the pixelated text (now {})", p.name),
+                None => "The screenshot with the pixelated text".into(),
+            })
             .clicked()
         {
             if let Some(path) = choose("Choose the pixelated picture") {
@@ -185,7 +191,13 @@ fn toolbar(st: &mut State, ui: &mut egui::Ui) {
         }
         if ui
             .button(icons::with(icons::FOLDER_OPEN, "Reference…"))
-            .on_hover_text("A screenshot of the De Bruijn text in the same font and size")
+            .on_hover_text(match &st.reference {
+                Some(p) => format!(
+                    "A screenshot of the De Bruijn text in the same font and size (now {})",
+                    p.name
+                ),
+                None => "A screenshot of the De Bruijn text in the same font and size".into(),
+            })
             .clicked()
         {
             if let Some(path) = choose("Choose the reference picture") {
@@ -198,10 +210,24 @@ fn toolbar(st: &mut State, ui: &mut egui::Ui) {
                 }
             }
         }
-        if let Some(r) = &st.reference {
-            ui.weak(format!("reference: {}", r.name));
+        if ui
+            .selectable_label(st.help, "Reference text…")
+            .on_hover_text("The text to type in the target's editor to make the reference")
+            .clicked()
+        {
+            st.help = !st.help;
         }
-        ui.separator();
+        if ui
+            .add_enabled(
+                st.result.is_some(),
+                egui::Button::new(icons::with(icons::DOWNLOAD, "Export PNG…")),
+            )
+            .clicked()
+        {
+            export(st);
+        }
+    });
+    ui.horizontal(|ui| {
         ui.label("Block");
         ui.add(egui::DragValue::new(&mut st.block).range(0..=64).custom_formatter(|v, _| {
             if v == 0.0 {
@@ -231,29 +257,26 @@ fn toolbar(st: &mut State, ui: &mut egui::Ui) {
         }
         if st.job.is_some() {
             ui.spinner();
-            ui.weak("matching…");
-        }
-        if ui
-            .add_enabled(
-                st.result.is_some(),
-                egui::Button::new(icons::with(icons::DOWNLOAD, "Export PNG…")),
-            )
-            .clicked()
-        {
-            export(st);
         }
     });
 }
 
-/// Folding help: the text to type in the target's editor.
-fn reference_help(st: &mut State, ui: &mut egui::Ui) {
-    egui::CollapsingHeader::new("Make the reference text")
-        .default_open(false)
-        .show(ui, |ui| {
+/// The text to type in the target's editor, in a window of its own.
+fn reference_help(st: &mut State, ctx: &egui::Context) {
+    let mut open = st.help;
+    egui::Window::new("Reference text")
+        .open(&mut open)
+        .collapsible(false)
+        .resizable(false)
+        .default_width(380.0)
+        .show(ctx, |ui| {
             ui.weak("Type this text in the editor and font that produced the pixelated text, at the same size and colours, screenshot it, and open that as the reference. It holds every run of characters once, so every block has a match.");
-            ui.horizontal_wrapped(|ui| {
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
                 ui.label("Characters");
-                ui.add(egui::TextEdit::singleline(&mut st.alphabet).desired_width(260.0));
+                ui.add(egui::TextEdit::singleline(&mut st.alphabet).desired_width(220.0));
+            });
+            ui.horizontal(|ui| {
                 ui.label("Run");
                 ui.add(egui::DragValue::new(&mut st.order).range(2..=4));
                 let chars: Vec<char> = dedup(&st.alphabet);
@@ -268,11 +291,12 @@ fn reference_help(st: &mut State, ui: &mut egui::Ui) {
                     .clicked()
                 {
                     let text = depix::wrapped(&depix::de_bruijn(&chars, st.order), 100);
-                    ui.ctx().copy_text(text);
+                    ctx.copy_text(text);
                     st.status = Some(("Reference text copied".into(), false));
                 }
             });
         });
+    st.help = open;
 }
 
 fn dedup(s: &str) -> Vec<char> {
@@ -354,6 +378,7 @@ fn pane(st: &mut State, index: usize, ui: &mut egui::Ui) {
         &st.result
     };
     ui.horizontal(|ui| {
+        ui.set_min_height(24.0);
         ui.label(
             egui::RichText::new(if index == 0 { "Pixelated" } else { "Recovered" })
                 .strong()
