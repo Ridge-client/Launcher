@@ -1545,6 +1545,8 @@ pub struct Node {
     /// The picture's original file name.
     pub picture_name: String,
     pub border: LineStyle,
+    /// Where this fact came from (a URL, a document, a person…), shown under the entity.
+    pub source: String,
 }
 
 impl Default for Node {
@@ -1558,6 +1560,7 @@ impl Default for Node {
             picture: String::new(),
             picture_name: String::new(),
             border: LineStyle::Solid,
+            source: String::new(),
         }
     }
 }

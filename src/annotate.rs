@@ -164,7 +164,7 @@ fn ink_on(rgb: [u8; 3]) -> Rgba<u8> {
     }
 }
 
-fn fill(img: &mut RgbaImage, [l, t, r, b]: [f32; 4], colour: Rgba<u8>) {
+pub(crate) fn fill(img: &mut RgbaImage, [l, t, r, b]: [f32; 4], colour: Rgba<u8>) {
     let (w, h) = img.dimensions();
     let x0 = (l.max(0.0) as u32).min(w);
     let x1 = (r.max(0.0).ceil() as u32).min(w);
@@ -185,7 +185,7 @@ fn outline(img: &mut RgbaImage, [l, t, r, b]: [f32; 4], stroke: f32, colour: Rgb
     fill(img, [r - stroke, t, r, b], colour);
 }
 
-fn text_width(font: &FontRef, text: &str, size: f32) -> f32 {
+pub(crate) fn text_width(font: &FontRef, text: &str, size: f32) -> f32 {
     let font = font.as_scaled(PxScale::from(size));
     text.chars().map(|c| font.h_advance(font.glyph_id(c))).sum()
 }

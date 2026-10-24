@@ -9,6 +9,7 @@ mod catalog;
 mod cli;
 mod depix;
 mod graph;
+mod graph_export;
 mod gui;
 mod overpass;
 mod persona;

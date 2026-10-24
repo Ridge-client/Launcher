@@ -207,6 +207,38 @@ fn open(st: &mut State) {
     }
 }
 
+/// Renders the board to a picture and saves it where the user chooses, as PNG or JPG.
+fn export_image(st: &mut State) {
+    let Some(path) = rfd::FileDialog::new()
+        .set_title("Export the board as a picture")
+        .add_filter("PNG", &["png"])
+        .add_filter("JPEG", &["jpg", "jpeg"])
+        .set_file_name(format!("{}.png", st.title()))
+        .save_file()
+    else {
+        return;
+    };
+    let jpeg = matches!(
+        path.extension().and_then(|e| e.to_str()).map(str::to_lowercase),
+        Some(ref ext) if ext == "jpg" || ext == "jpeg"
+    );
+    let result = crate::graph_export::render(&st.graph).and_then(|img| {
+        if jpeg {
+            image::DynamicImage::ImageRgba8(img)
+                .to_rgb8()
+                .save_with_format(&path, image::ImageFormat::Jpeg)
+                .map_err(|e| e.to_string())
+        } else {
+            img.save_with_format(&path, image::ImageFormat::Png)
+                .map_err(|e| e.to_string())
+        }
+    });
+    st.status = Some(match result {
+        Ok(()) => (format!("Exported to {}", path.display()), false),
+        Err(e) => (format!("Couldn't export to {}: {e}", path.display()), true),
+    });
+}
+
 /// New or Open: right away, or once the user said what to do with unsaved changes.
 fn request(st: &mut State, what: Pending, ctx: &egui::Context) {
     if st.dirty {
@@ -488,6 +520,13 @@ fn toolbar(st: &mut State, ui: &mut egui::Ui) {
                 save(st, true);
             }
         });
+        if ui
+            .button(icons::FILE_IMAGE)
+            .on_hover_text("Export the board as a picture (PNG or JPG)")
+            .clicked()
+        {
+            export_image(st);
+        }
         ui.separator();
         for (how, icon, tip) in [
             (
@@ -694,6 +733,7 @@ fn canvas(st: &mut State, ui: &mut egui::Ui) {
     let z = view.zoom;
     let title_font = egui::FontId::proportional(13.5 * z);
     let sub_font = egui::FontId::proportional(11.0 * z);
+    let source_font = egui::FontId::proportional(10.0 * z);
     let icon_font = egui::FontId::proportional(20.0 * z);
     let text = ui.visuals().text_color();
     let weak = ui.visuals().weak_text_color();
@@ -702,6 +742,7 @@ fn canvas(st: &mut State, ui: &mut egui::Ui) {
         rect: Rect,
         title: std::sync::Arc<egui::Galley>,
         sub: Option<std::sync::Arc<egui::Galley>>,
+        source: Option<std::sync::Arc<egui::Galley>>,
         icon: &'static str,
         colour: Color32,
         picture: Option<egui::TextureId>,
@@ -723,6 +764,9 @@ fn canvas(st: &mut State, ui: &mut egui::Ui) {
             let sub = Some(n.subtitle())
                 .filter(|s| !s.is_empty())
                 .map(|s| painter.layout_no_wrap(short(s, 36), sub_font.clone(), weak));
+            let source = Some(n.source.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .map(|s| painter.layout_no_wrap(short(s, 40), source_font.clone(), weak));
             let text_w = title.size().x.max(sub.as_ref().map_or(0.0, |s| s.size().x));
             let size = Vec2::new(
                 (text_w + 52.0 * z).max(120.0 * z),
@@ -733,6 +777,7 @@ fn canvas(st: &mut State, ui: &mut egui::Ui) {
                 rect: Rect::from_center_size(view.to_screen(n.pos), size),
                 title,
                 sub,
+                source,
                 icon: kind.icon,
                 colour: colour(kind.colour()),
                 border: n.border,
@@ -847,6 +892,13 @@ fn canvas(st: &mut State, ui: &mut egui::Ui) {
         y += d.title.size().y;
         if let Some(sub) = &d.sub {
             painter.galley(Pos2::new(text_x, y), sub.clone(), weak);
+        }
+        if let Some(source) = &d.source {
+            let pos = Pos2::new(
+                d.rect.center().x - source.size().x / 2.0,
+                d.rect.bottom() + 4.0 * z,
+            );
+            painter.galley(pos, source.clone(), weak);
         }
         // the handle to draw a link from
         if selected || ui.rect_contains_pointer(d.rect.expand(8.0)) {
@@ -1302,6 +1354,18 @@ fn node_details(st: &mut State, ui: &mut egui::Ui, id: u64) {
             }
         });
     node.values.retain(|_, v| !v.is_empty());
+
+    ui.add_space(10.0);
+    ui.horizontal(|ui| {
+        ui.label("Source");
+        ui.add(
+            egui::TextEdit::singleline(&mut node.source)
+                .hint_text("Where this was found")
+                .desired_width(170.0),
+        );
+    })
+    .response
+    .on_hover_text("Shown under the entity on the board");
 
     ui.add_space(10.0);
     ui.strong("Picture");
